@@ -65,7 +65,7 @@ public sealed class TypesRoundTripFixtures
             string.IsNullOrWhiteSpace(ProtocolVersion.Current),
             "ProtocolVersion.Current must be non-empty");
         Assert.NotEmpty(ProtocolVersion.Supported);
-        Assert.Equal(ProtocolVersion.Current, ProtocolVersion.Supported[0]);
+        Assert.Equal(new[] { "1.0.0", "0.9.0" }, ProtocolVersion.Supported);
     }
 
     // ── Verifier ──────────────────────────────────────────────────────────

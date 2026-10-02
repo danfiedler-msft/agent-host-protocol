@@ -340,8 +340,7 @@ func TestProtocolVersionConstants(t *testing.T) {
 		t.Errorf("SupportedProtocolVersions() must be non-empty")
 	}
 
-	if len(supported) > 0 && supported[0] != ProtocolVersion {
-		t.Errorf("first SupportedProtocolVersions entry %q must equal ProtocolVersion %q",
-			supported[0], ProtocolVersion)
+	if len(supported) != 2 || supported[0] != "1.0.0" || supported[1] != "0.9.0" {
+		t.Errorf("unexpected released compatibility baselines: %v", supported)
 	}
 }

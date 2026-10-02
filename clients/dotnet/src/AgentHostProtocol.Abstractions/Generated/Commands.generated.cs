@@ -288,7 +288,9 @@ public sealed record InitializeParams
     /// preferred to least preferred. Each entry is a [SemVer](https://semver.org)
     /// `MAJOR.MINOR.PATCH` string (e.g. `"0.1.0"`).
     ///
-    /// The server selects one entry and returns it as `InitializeResult.protocolVersion`.
+    /// The server selects the highest offered SemVer within its supported
+    /// caret-compatible ranges and returns that exact entry as
+    /// `InitializeResult.protocolVersion`.
     /// If the server cannot speak any of the offered versions, it MUST return
     /// error code `-32005` (`UnsupportedProtocolVersion`) with required
     /// `UnsupportedProtocolVersionErrorData` containing `supportedVersions`.</summary>
