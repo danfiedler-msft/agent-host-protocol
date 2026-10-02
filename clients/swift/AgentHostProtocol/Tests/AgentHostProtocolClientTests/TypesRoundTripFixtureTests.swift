@@ -226,9 +226,9 @@ final class TypesRoundTripFixtureTests: XCTestCase {
             "SUPPORTED_PROTOCOL_VERSIONS must be non-empty"
         )
         XCTAssertEqual(
-            SUPPORTED_PROTOCOL_VERSIONS.first,
-            PROTOCOL_VERSION,
-            "first SUPPORTED_PROTOCOL_VERSIONS entry must equal PROTOCOL_VERSION"
+            SUPPORTED_PROTOCOL_VERSIONS,
+            ["1.0.0", "0.9.0"],
+            "only released compatibility baselines should be advertised"
         )
     }
 

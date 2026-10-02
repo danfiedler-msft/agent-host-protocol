@@ -54,10 +54,18 @@ Protocol versions are [SemVer](https://semver.org) `MAJOR.MINOR.PATCH` strings (
 Version selection happens once, during the [`initialize`](/specification/lifecycle) handshake — modelled after WebSocket subprotocol negotiation:
 
 1. The client sends `InitializeParams.protocolVersions`: an array of every protocol version it is willing to speak, ordered from most preferred to least preferred.
-2. The server picks one entry it can speak and returns it as `InitializeResult.protocolVersion`. Servers SHOULD honor the client's preference order when multiple offered versions are acceptable.
+2. The server selects the highest SemVer entry within a supported caret-compatible range and returns that exact offered string as `InitializeResult.protocolVersion`. The released compatibility baselines are `1.0.0` and `0.9.0`: hosts accept `>=1.0.0 <2.0.0` or `>=0.9.0 <0.10.0`, regardless of offer order. Development versions are independent of these advertised baselines.
 3. If the server cannot speak any of the offered versions, it MUST respond with [`UnsupportedProtocolVersion`](/reference/error-codes) (`-32005`) and required `data.supportedVersions` instead of a result, and close the connection.
 
 Both peers MUST use the selected version for the rest of the connection. There is no per-message renegotiation.
+
+The SDKs expose host-side selection helpers: TypeScript, Kotlin, and Swift
+`negotiateProtocolVersion`, Rust `negotiate_protocol_version`, Go
+`NegotiateProtocolVersion`, and .NET `ProtocolVersion.Negotiate`.
+Pass the client's offered version list. A missing result means the host must send
+`UnsupportedProtocolVersion` with its supported baselines and close the connection.
+Malformed versions produce an explicit error; versions must contain three
+non-negative integer components without leading zeros, prerelease or build metadata.
 
 ## Compatibility Guarantee
 

@@ -297,9 +297,5 @@ fn protocol_version_constants() {
         !supported.is_empty(),
         "SUPPORTED_PROTOCOL_VERSIONS must be non-empty"
     );
-    assert_eq!(
-        supported[0], PROTOCOL_VERSION,
-        "first SUPPORTED_PROTOCOL_VERSIONS entry {:?} must equal PROTOCOL_VERSION {:?}",
-        supported[0], PROTOCOL_VERSION
-    );
+    assert_eq!(supported, &["1.0.0", "0.9.0"]);
 }

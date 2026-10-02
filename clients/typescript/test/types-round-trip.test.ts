@@ -287,9 +287,5 @@ test('ProtocolVersion constants', () => {
     'SUPPORTED_PROTOCOL_VERSIONS must be a non-empty array',
   );
 
-  assert.equal(
-    SUPPORTED_PROTOCOL_VERSIONS[0],
-    PROTOCOL_VERSION,
-    `first SUPPORTED_PROTOCOL_VERSIONS entry "${SUPPORTED_PROTOCOL_VERSIONS[0]}" must equal PROTOCOL_VERSION "${PROTOCOL_VERSION}"`,
-  );
+  assert.deepEqual(SUPPORTED_PROTOCOL_VERSIONS, ['1.0.0', '0.9.0']);
 });
