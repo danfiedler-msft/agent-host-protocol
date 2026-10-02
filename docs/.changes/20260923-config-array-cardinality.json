@@ -1,5 +1,15 @@
 {
   "type": "added",
   "message": "`ConfigPropertySchema.minItems` and `ConfigPropertySchema.maxItems` express array cardinality for `type: \"array\"` config properties.",
-  "issues": [432]
+  "targets": [
+    "spec",
+    "rust",
+    "kotlin",
+    "typescript",
+    "swift",
+    "go"
+  ],
+  "issues": [
+    432
+  ]
 }

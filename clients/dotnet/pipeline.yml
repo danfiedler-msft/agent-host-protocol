@@ -51,7 +51,6 @@ extends:
     strongNameSigning:
       enabled: true
       folderPath: $(Build.SourcesDirectory)/clients/dotnet/src
-      keyCode: CP-233904-SN
       pattern: "**/bin/Release/**/Microsoft.AgentHostProtocol*.dll"
 
     buildSteps:
