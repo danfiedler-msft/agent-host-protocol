@@ -477,43 +477,6 @@ this release negotiates.
   receive buffer dropped a frame; the receive loop now grows the buffer after
   copying the previous frame rather than before.
 
-## [0.9.1] — 2026-10-02
-
-Implements AHP 0.10.0.
-
-### Added
-
-- A hermetic real-WebSocket conformance lane now verifies .NET session negotiation, initialize snapshot seeding, and streamed reducer convergence against a repository-local TypeScript host.
-- `AuthenticateParams.expiresIn` carries an OAuth access token's remaining lifetime in seconds.
-- `SessionSummary.chats`, `SessionChatSummary.interactivity`, and `SessionSummary.defaultChat` expose lightweight chat navigation data without requiring a session subscription.
-- `chat/isArchivedChanged` action for archiving a chat independently of its session.
-- `ChatState.changesets` and `chat/changesetsChanged` expose each chat's changeset catalogue through the subscribed chat channel.
-- `AutomationDefinition.disableConditions` supports `afterRuns` (`max`) and `afterDate` (`date`) rules combined with logical OR, with at most one condition per kind. Host-owned `AutomationEntry.runCount` tracks the current scheduled-run allowance. Edit conditions through `automation/updateRequested`: omission leaves them unchanged, an array replaces them, and `[]` removes all conditions without re-enabling the automation.
-- `ChangesetStatus.Recomputing` distinguishes refreshes of a completed result from initial changeset computation.
-- `ConfigPropertySchema.minItems` and `ConfigPropertySchema.maxItems` express array cardinality for `type: "array"` config properties. (#432)
-- `McpServerStartingState.blocking` flag indicating that message processing may be held on the server, and the client-dispatchable `session/mcpServerBackgroundRequested` action asking the host to background such a startup.
-- `AutomationSessionTemplate.customizations` lets automations carry client plugins (skills, agents, prompts, rules) that the host captures when the definition is saved, with the host-owned copies reported in `AutomationEntry.customizations` and support advertised by `AutomationCapabilities.customizations`.
-- Hosts can advertise chat-owned canvas channel references and synchronize live presentation metadata and source URLs on experimental per-canvas channels.
-- Atomic stable-URI `moveChat` transfer and same-session ordering for host-authorized chats, with per-chat `movable` discovery and durable authoritative catalogs.
-- Expose chat-owned background work (background shells and subagents) in chat state, with `chat/backgroundWorkSet` and `chat/backgroundWorkRemoved` actions independent of turn lifetime.
-- `ChatSummary.changes` and `ChatState.changes` provide aggregate file-change counts without requiring a changeset subscription.
-- `SessionChatSummary.status` exposes per-chat archived state via `SessionStatus.IsArchived` in the lightweight chat catalog without requiring a session subscription.
-- `chat/isReadChanged` action and optional `SessionChatSummary.status` projection for independently tracking the status of any known chat, including the default chat; the status bitset replaces the unreleased `isRead` and `archived` catalog fields.
-- `SessionChatSummary.changes` exposes per-chat change counts in the lightweight chat catalog without requiring a session subscription.
-
-### Changed
-
-- Historical `ToolResultTerminalContent.resource` subscriptions return lazily reconstructed exited terminal state with retained output.
-- `FileEdit` and preview `edits` now use named models in generated SDKs. This breaks affected SDK APIs but keeps JSON shapes unchanged.
-- The .NET assemblies are now strong-name signed with public key token `f300afd708cefcd3`.
-
-### Fixed
-
-- Generated action and union-variant records now pin their own literal discriminator as the property initializer, so constructing one without setting the discriminator serializes the correct wire value. Previously the property fell back to the type's zero value — the *first* enum member, which silently emitted the wrong discriminator on every record but the first. (#366)
-- Open (`@nonexhaustive`) protocol enums no longer fail decoding when a newer peer sends a wire value this build does not recognize. They are now generated as readonly structs wrapping the raw wire string (with the known values as static members) instead of closed C# enums, so an added enum value round-trips verbatim as `versioning.md` requires. Each open enum gets a generated converter, so the path no longer relies on reflection. (#366)
-- Discriminated unions now derive whether an unrecognized discriminator is preserved from the discriminator enum's `@exhaustive` / `@nonexhaustive` annotation, matching the other generators. `SessionOrigin` and `CustomizationEnablement` previously rejected a discriminator added by a newer peer even though their discriminants are open; `ChangesetOperationTarget` is likewise derived now. (#366)
-- Preserve unknown future chat move destinations when decoding and re-encoding with the .NET client.
-
 ## [0.9.0] — 2026-08-28
 
 Implements AHP 0.9.0.

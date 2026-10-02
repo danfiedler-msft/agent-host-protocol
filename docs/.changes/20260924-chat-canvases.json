@@ -1,12 +1,4 @@
 {
   "type": "added",
-  "message": "Hosts can advertise chat-owned canvas channel references and synchronize live presentation metadata and source URLs on experimental per-canvas channels.",
-  "targets": [
-    "spec",
-    "rust",
-    "kotlin",
-    "typescript",
-    "swift",
-    "go"
-  ]
+  "message": "Hosts can advertise chat-owned canvas channel references and synchronize live presentation metadata and source URLs on experimental per-canvas channels."
 }

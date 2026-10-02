@@ -1,12 +1,4 @@
 {
   "type": "added",
-  "message": "`chat/isArchivedChanged` action for archiving a chat independently of its session.",
-  "targets": [
-    "spec",
-    "rust",
-    "kotlin",
-    "typescript",
-    "swift",
-    "go"
-  ]
+  "message": "`chat/isArchivedChanged` action for archiving a chat independently of its session."
 }
