@@ -62,6 +62,34 @@ internal object ChatSourceKindSerializer : KSerializer<ChatSourceKind> {
 }
 
 /**
+ * Destination kind for an atomic chat move.
+ */
+@Serializable(with = ChatMoveDestinationKindSerializer::class)
+@JvmInline
+value class ChatMoveDestinationKind(val rawValue: String) {
+    companion object {
+        /**
+         * Move the source chat subtree into an existing session.
+         */
+        val SESSION: ChatMoveDestinationKind = ChatMoveDestinationKind("session")
+        /**
+         * Move the source chat subtree into a newly allocated session.
+         */
+        val NEW_SESSION: ChatMoveDestinationKind = ChatMoveDestinationKind("newSession")
+    }
+}
+
+internal object ChatMoveDestinationKindSerializer : KSerializer<ChatMoveDestinationKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChatMoveDestinationKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ChatMoveDestinationKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ChatMoveDestinationKind =
+        ChatMoveDestinationKind(decoder.decodeString())
+}
+
+/**
  * Encoding of fetched content data.
  */
 @Serializable
@@ -431,7 +459,12 @@ data class AutomationCapabilities(
      * runs are not counted toward the limit. Absence means the retention limit is
      * implementation-defined.
      */
-    val runHistoryLimit: Long? = null
+    val runHistoryLimit: Long? = null,
+    /**
+     * Present when {@link AutomationSessionTemplate.customizations} may contain
+     * client plugins for the host to capture.
+     */
+    val customizations: AutomationCustomizationsCapability? = null
 )
 
 @Serializable
@@ -449,6 +482,9 @@ data class AutomationScheduleCapabilities(
 
 @Serializable
 class AutomationRunCancellationCapability
+
+@Serializable
+class AutomationCustomizationsCapability
 
 @Serializable
 data class Implementation(
@@ -724,6 +760,59 @@ data class DisposeChatParams(
      */
     @SerialName("_meta")
     val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class ChatMoveToSessionDestination(
+    /**
+     * Discriminant
+     */
+    val kind: ChatMoveDestinationKind,
+    /**
+     * Destination session URI.
+     */
+    val session: String,
+    /**
+     * Chat after which to place the requested chat.
+     *
+     * The anchor MUST be a different chat in the destination session. When
+     * omitted, the requested chat is placed at the beginning of the catalog.
+     */
+    val after: String? = null
+)
+
+@Serializable
+data class ChatMoveToNewSessionDestination(
+    /**
+     * Discriminant
+     */
+    val kind: ChatMoveDestinationKind
+)
+
+@Serializable
+data class MoveChatParams(
+    /**
+     * Channel URI this command targets.
+     */
+    val channel: String,
+    /**
+     * Optional JSON-serializable metadata associated with this request.
+     * Receivers MUST ignore keys they do not understand.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Atomic move destination.
+     */
+    val destination: ChatMoveDestination
+)
+
+@Serializable
+data class MoveChatResult(
+    /**
+     * Authoritative owning session URI after the move.
+     */
+    val session: String
 )
 
 @Serializable
@@ -1373,6 +1462,14 @@ data class SessionConfigPropertySchema(
      */
     val items: ConfigPropertySchema? = null,
     /**
+     * JSON Schema: minimum number of array items (used when `type` is `'array'`)
+     */
+    val minItems: Long? = null,
+    /**
+     * JSON Schema: maximum number of array items (used when `type` is `'array'`)
+     */
+    val maxItems: Long? = null,
+    /**
      * JSON Schema: property descriptors for object properties (used when `type` is `'object'`)
      */
     val properties: Map<String, ConfigPropertySchema>? = null,
@@ -1720,6 +1817,57 @@ internal object ChatSourceSerializer : KSerializer<ChatSource> {
             is ChatSourceFork -> output.json.encodeToJsonElement(ForkChatSource.serializer(), value.value)
             is ChatSourceSideChat -> output.json.encodeToJsonElement(SideChatSource.serializer(), value.value)
             is ChatSourceUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+// ─── ChatMoveDestination Union ──────────────────────────────────────────────
+
+@Serializable(with = ChatMoveDestinationSerializer::class)
+sealed interface ChatMoveDestination
+
+@JvmInline
+value class ChatMoveDestinationSession(val value: ChatMoveToSessionDestination) : ChatMoveDestination
+@JvmInline
+value class ChatMoveDestinationNewSession(val value: ChatMoveToNewSessionDestination) : ChatMoveDestination
+/**
+ * Forward-compat catch-all for unknown ChatMoveDestination discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ChatMoveDestinationUnknown(val raw: JsonObject) : ChatMoveDestination
+
+internal object ChatMoveDestinationSerializer : KSerializer<ChatMoveDestination> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ChatMoveDestination")
+
+    override fun deserialize(decoder: Decoder): ChatMoveDestination {
+        val input = decoder as? JsonDecoder
+            ?: error("ChatMoveDestination can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ChatMoveDestination")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return ChatMoveDestinationUnknown(obj)
+        return when (discriminant) {
+            "session" -> ChatMoveDestinationSession(input.json.decodeFromJsonElement(ChatMoveToSessionDestination.serializer(), element))
+            "newSession" -> ChatMoveDestinationNewSession(input.json.decodeFromJsonElement(ChatMoveToNewSessionDestination.serializer(), element))
+            else -> ChatMoveDestinationUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ChatMoveDestination) {
+        val output = encoder as? JsonEncoder
+            ?: error("ChatMoveDestination can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ChatMoveDestinationSession -> output.json.encodeToJsonElement(ChatMoveToSessionDestination.serializer(), value.value)
+            is ChatMoveDestinationNewSession -> output.json.encodeToJsonElement(ChatMoveToNewSessionDestination.serializer(), value.value)
+            is ChatMoveDestinationUnknown -> value.raw
         }
         output.encodeJsonElement(element)
     }

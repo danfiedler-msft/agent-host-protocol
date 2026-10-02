@@ -154,6 +154,7 @@ function mapType(tsType: string): string {
     tsType === 'RootState | SessionState | TerminalState | ChangesetState | ResourceWatchState | AnnotationsState' ||
     tsType === 'RootState | SessionState | TerminalState | ChangesetState | ResourceWatchState | AnnotationsState | ChatState' ||
     tsType === 'RootState | SessionState | TerminalState | ChangesetState | ResourceWatchState | AnnotationsState | ChatState | AutomationState | AutomationRunState' ||
+    tsType === 'RootState | SessionState | TerminalState | ChangesetState | ResourceWatchState | AnnotationsState | ChatState | CanvasState | AutomationState | AutomationRunState' ||
     tsType === 'RootState | SessionState | ChatState' ||
     tsType === 'RootState | SessionState | ChatState | TerminalState' ||
     tsType === 'RootState | SessionState | ChatState | TerminalState | ChangesetState' ||
@@ -838,6 +839,7 @@ sealed interface SnapshotState {
     @JvmInline value class Root(val value: RootState) : SnapshotState
     @JvmInline value class Session(val value: SessionState) : SnapshotState
     @JvmInline value class Chat(val value: ChatState) : SnapshotState
+    @JvmInline value class Canvas(val value: CanvasState) : SnapshotState
     @JvmInline value class Terminal(val value: TerminalState) : SnapshotState
     @JvmInline value class Changeset(val value: ChangesetState) : SnapshotState
     @JvmInline value class ResourceWatch(val value: ResourceWatchState) : SnapshotState
@@ -872,6 +874,8 @@ internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
                 SnapshotState.Automations(input.json.decodeFromJsonElement(AutomationState.serializer(), element))
             obj.containsKey("lifecycle") -> SnapshotState.Session(input.json.decodeFromJsonElement(SessionState.serializer(), element))
             obj.containsKey("turns") -> SnapshotState.Chat(input.json.decodeFromJsonElement(ChatState.serializer(), element))
+            obj.containsKey("instanceId") && obj.containsKey("extensionId") && obj.containsKey("canvasId") ->
+                SnapshotState.Canvas(input.json.decodeFromJsonElement(CanvasState.serializer(), element))
             obj.containsKey("status") && obj.containsKey("files") ->
                 SnapshotState.Changeset(input.json.decodeFromJsonElement(ChangesetState.serializer(), element))
             obj.containsKey("root") && obj.containsKey("recursive") ->
@@ -891,6 +895,7 @@ internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
             is SnapshotState.Root -> output.json.encodeToJsonElement(RootState.serializer(), value.value)
             is SnapshotState.Session -> output.json.encodeToJsonElement(SessionState.serializer(), value.value)
             is SnapshotState.Chat -> output.json.encodeToJsonElement(ChatState.serializer(), value.value)
+            is SnapshotState.Canvas -> output.json.encodeToJsonElement(CanvasState.serializer(), value.value)
             is SnapshotState.Terminal -> output.json.encodeToJsonElement(TerminalState.serializer(), value.value)
             is SnapshotState.Changeset -> output.json.encodeToJsonElement(ChangesetState.serializer(), value.value)
             is SnapshotState.ResourceWatch -> output.json.encodeToJsonElement(ResourceWatchState.serializer(), value.value)
@@ -975,10 +980,12 @@ const STATE_ENUMS = [
   'ToolCallContributorKind',
   'ToolResultContentType', 'CustomizationType', 'CustomizationEnablementKind', 'CustomizationLoadStatus',
   'TerminalClaimKind', 'TerminalLifecycleStatus',
+  'BackgroundWorkKind',
   'McpServerStatus', 'McpAuthRequiredReason',
   'ChangesetStatus', 'ChangesetOperationStatus', 'ChangesetOperationScope', 'ResourceChangeType',
   'SessionOriginKind',
   'AutomationOperation', 'AutomationMisfirePolicy', 'AutomationTriggerKind',
+  'AutomationDisableConditionKind',
   'AutomationRunStatus', 'AutomationRunOriginKind',
 ];
 
@@ -989,9 +996,11 @@ const STATE_STRUCTS = [
   'MultipleWorkingDirectoriesCapability',
   'SessionModelInfo', 'ModelSelection', 'AgentSelection', 'ConfigPropertySchema', 'ConfigSchema',
   'PendingMessage', 'ChatState', 'ChatSummary', 'SideChatSelection', 'SessionState', 'SessionActiveClient',
+  'BackgroundShellWork', 'BackgroundSubagentWork',
+  'CanvasReference', 'CanvasState',
   'SessionChatInputRequest', 'SessionToolConfirmationRequest', 'SessionToolClientExecutionRequest',
   'SessionToolAuthenticationRequest',
-  'SessionSummary', 'ChangesSummary', 'ProjectInfo', 'SessionConfigState', 'Turn', 'ActiveTurn', 'Message',
+  'SessionSummary', 'SessionChatSummary', 'ChangesSummary', 'ProjectInfo', 'SessionConfigState', 'Turn', 'ActiveTurn', 'Message',
   'MessageOrigin',
   'ChatInputOption',
   'ChatInputTextAnswerValue', 'ChatInputNumberAnswerValue',
@@ -1028,7 +1037,8 @@ const STATE_STRUCTS = [
   'McpServerStartingState', 'McpServerReadyState', 'McpServerAuthRequiredState',
   'McpServerErrorState', 'McpServerStoppedState', 'McpOAuthClient', 'McpAuthRequirement',
   'ToolCallClientContributor', 'ToolCallMcpContributor',
-  'FileEdit', 'TerminalCommandResult', 'TerminalInfo',
+  'FileEditSide', 'FileEditDiffStats', 'FileEdit', 'FileEditCollection',
+  'TerminalCommandResult', 'TerminalInfo',
   'TerminalClientClaim', 'TerminalSessionClaim',
   'TerminalRunningLifecycleState', 'TerminalExitedLifecycleState', 'TerminalState',
   'TerminalUnclassifiedPart', 'TerminalCommandPart',
@@ -1042,6 +1052,7 @@ const STATE_STRUCTS = [
   'AutomationTriggerEventDefinition', 'AutomationTriggerDefinition',
   'AutomationSessionTemplate', 'AutomationDefinition',
   'AutomationDefinitionPatch',
+  'AutomationAfterRunsCondition', 'AutomationAfterDateCondition',
   'AutomationEntry', 'AutomationState',
   'AutomationManualRunOrigin', 'AutomationTriggeredRunOrigin',
   'AutomationPendingRunLifecycle', 'AutomationRunningRunLifecycle',
@@ -1321,6 +1332,16 @@ const SESSION_INPUT_REQUEST_UNION: UnionConfig = {
   unknown: true,
 };
 
+const BACKGROUND_WORK_UNION: UnionConfig = {
+  name: 'BackgroundWork',
+  discriminantField: 'kind',
+  variants: [
+    { caseName: 'Shell', structName: 'BackgroundShellWork', discriminantValue: 'shell' },
+    { caseName: 'Subagent', structName: 'BackgroundSubagentWork', discriminantValue: 'subagent' },
+  ],
+  unknown: true,
+};
+
 const SESSION_ORIGIN_UNION: UnionConfig = {
   name: 'SessionOrigin',
   discriminantField: 'kind',
@@ -1336,6 +1357,16 @@ const AUTOMATION_TRIGGER_UNION: UnionConfig = {
   variants: [
     { caseName: 'Schedule', structName: 'AutomationScheduleTrigger', discriminantValue: 'schedule' },
     { caseName: 'Event', structName: 'AutomationEventTrigger', discriminantValue: 'event' },
+  ],
+  injectDiscriminantOnSerialize: true,
+};
+
+const AUTOMATION_DISABLE_CONDITION_UNION: UnionConfig = {
+  name: 'AutomationDisableCondition',
+  discriminantField: 'kind',
+  variants: [
+    { caseName: 'AfterRuns', structName: 'AutomationAfterRunsCondition', discriminantValue: 'afterRuns' },
+    { caseName: 'AfterDate', structName: 'AutomationAfterDateCondition', discriminantValue: 'afterDate' },
   ],
   injectDiscriminantOnSerialize: true,
 };
@@ -1445,10 +1476,13 @@ function generateStateFile(project: Project): string {
   lines.push(generateDiscriminatedUnion(project, TERMINAL_LIFECYCLE_STATE_UNION));
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, SESSION_INPUT_REQUEST_UNION));
+  lines.push(generateDiscriminatedUnion(project, BACKGROUND_WORK_UNION));
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, SESSION_ORIGIN_UNION));
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, AUTOMATION_TRIGGER_UNION));
+  lines.push('');
+  lines.push(generateDiscriminatedUnion(project, AUTOMATION_DISABLE_CONDITION_UNION));
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, AUTOMATION_RUN_ORIGIN_UNION));
   lines.push('');
@@ -1472,6 +1506,7 @@ const ACTION_VARIANTS: { type: string; caseName: string; tsInterface: string }[]
   { type: 'session/chatAdded', caseName: 'SessionChatAdded', tsInterface: 'SessionChatAddedAction' },
   { type: 'session/chatRemoved', caseName: 'SessionChatRemoved', tsInterface: 'SessionChatRemovedAction' },
   { type: 'session/chatUpdated', caseName: 'SessionChatUpdated', tsInterface: 'SessionChatUpdatedAction' },
+  { type: 'session/chatsReordered', caseName: 'SessionChatsReordered', tsInterface: 'SessionChatsReorderedAction' },
   { type: 'session/defaultChatChanged', caseName: 'SessionDefaultChatChanged', tsInterface: 'SessionDefaultChatChangedAction' },
   { type: 'chat/turnStarted', caseName: 'ChatTurnStarted', tsInterface: 'ChatTurnStartedAction' },
   { type: 'chat/delta', caseName: 'ChatDelta', tsInterface: 'ChatDeltaAction' },
@@ -1490,6 +1525,12 @@ const ACTION_VARIANTS: { type: string; caseName: string; tsInterface: string }[]
   { type: 'chat/error', caseName: 'ChatError', tsInterface: 'ChatErrorAction' },
   { type: 'chat/turnResume', caseName: 'ChatTurnResume', tsInterface: 'ChatTurnResumeAction' },
   { type: 'chat/activityChanged', caseName: 'ChatActivityChanged', tsInterface: 'ChatActivityChangedAction' },
+  { type: 'chat/backgroundWorkSet', caseName: 'ChatBackgroundWorkSet', tsInterface: 'ChatBackgroundWorkSetAction' },
+  { type: 'chat/backgroundWorkRemoved', caseName: 'ChatBackgroundWorkRemoved', tsInterface: 'ChatBackgroundWorkRemovedAction' },
+  { type: 'chat/movableChanged', caseName: 'ChatMovableChanged', tsInterface: 'ChatMovableChangedAction' },
+  { type: 'chat/changesetsChanged', caseName: 'ChatChangesetsChanged', tsInterface: 'ChatChangesetsChangedAction' },
+  { type: 'chat/canvasesChanged', caseName: 'ChatCanvasesChanged', tsInterface: 'ChatCanvasesChangedAction' },
+  { type: 'canvas/stateChanged', caseName: 'CanvasStateChanged', tsInterface: 'CanvasStateChangedAction' },
   { type: 'session/titleChanged', caseName: 'SessionTitleChanged', tsInterface: 'SessionTitleChangedAction' },
   { type: 'chat/usage', caseName: 'ChatUsage', tsInterface: 'ChatUsageAction' },
   { type: 'chat/reasoning', caseName: 'ChatReasoning', tsInterface: 'ChatReasoningAction' },
@@ -1511,6 +1552,8 @@ const ACTION_VARIANTS: { type: string; caseName: string; tsInterface: string }[]
   { type: 'chat/pendingMessageRemoved', caseName: 'ChatPendingMessageRemoved', tsInterface: 'ChatPendingMessageRemovedAction' },
   { type: 'chat/queuedMessagesReordered', caseName: 'ChatQueuedMessagesReordered', tsInterface: 'ChatQueuedMessagesReorderedAction' },
   { type: 'chat/draftChanged', caseName: 'ChatDraftChanged', tsInterface: 'ChatDraftChangedAction' },
+  { type: 'chat/isReadChanged', caseName: 'ChatIsReadChanged', tsInterface: 'ChatIsReadChangedAction' },
+  { type: 'chat/isArchivedChanged', caseName: 'ChatIsArchivedChanged', tsInterface: 'ChatIsArchivedChangedAction' },
   { type: 'chat/inputRequested', caseName: 'ChatInputRequested', tsInterface: 'ChatInputRequestedAction' },
   { type: 'chat/inputAnswerChanged', caseName: 'ChatInputAnswerChanged', tsInterface: 'ChatInputAnswerChangedAction' },
   { type: 'chat/inputCompleted', caseName: 'ChatInputCompleted', tsInterface: 'ChatInputCompletedAction' },
@@ -1521,6 +1564,7 @@ const ACTION_VARIANTS: { type: string; caseName: string; tsInterface: string }[]
   { type: 'session/mcpServerStateChanged', caseName: 'SessionMcpServerStateChanged', tsInterface: 'SessionMcpServerStateChangedAction' },
   { type: 'session/mcpServerStartRequested', caseName: 'SessionMcpServerStartRequested', tsInterface: 'SessionMcpServerStartRequestedAction' },
   { type: 'session/mcpServerStopRequested', caseName: 'SessionMcpServerStopRequested', tsInterface: 'SessionMcpServerStopRequestedAction' },
+  { type: 'session/mcpServerBackgroundRequested', caseName: 'SessionMcpServerBackgroundRequested', tsInterface: 'SessionMcpServerBackgroundRequestedAction' },
   { type: 'chat/truncated', caseName: 'ChatTruncated', tsInterface: 'ChatTruncatedAction' },
   { type: 'chat/turnsLoaded', caseName: 'ChatTurnsLoaded', tsInterface: 'ChatTurnsLoadedAction' },
   { type: 'session/configChanged', caseName: 'SessionConfigChanged', tsInterface: 'SessionConfigChangedAction' },
@@ -1717,7 +1761,7 @@ function generateActionsFile(project: Project): string {
 
 // ─── Commands File Generator ─────────────────────────────────────────────────
 
-const COMMAND_ENUMS = ['ReconnectResultType', 'ChatSourceKind', 'ContentEncoding', 'CompletionItemKind', 'ResourceType', 'ResourceWriteMode'];
+const COMMAND_ENUMS = ['ReconnectResultType', 'ChatSourceKind', 'ChatMoveDestinationKind', 'ContentEncoding', 'CompletionItemKind', 'ResourceType', 'ResourceWriteMode'];
 
 const COMMAND_STRUCTS = [
   'InitializeParams', 'InitializeResult',
@@ -1725,11 +1769,13 @@ const COMMAND_STRUCTS = [
   'AutomationCreateCapability',
   'AutomationScheduleCapabilities',
   'AutomationRunCancellationCapability',
+  'AutomationCustomizationsCapability',
   'Implementation',
   'ReconnectParams', 'ReconnectReplayResult', 'ReconnectSnapshotResult',
   'SubscribeParams', 'SubscribeView', 'SubscriptionDeliveryOptions', 'SubscribeResult',
   'CreateSessionParams', 'DisposeSessionParams',
   'CreateChatParams', 'DisposeChatParams',
+  'ChatMoveToSessionDestination', 'ChatMoveToNewSessionDestination', 'MoveChatParams', 'MoveChatResult',
   'ListSessionsParams', 'ListSessionsResult',
   'ResourceReadParams', 'ResourceReadResult',
   'ResourceWriteParams', 'ResourceWriteResult',
@@ -1772,6 +1818,15 @@ const CHAT_SOURCE_UNION: UnionConfig = {
   variants: [
     { caseName: 'Fork', structName: 'ForkChatSource', discriminantValue: 'fork' },
     { caseName: 'SideChat', structName: 'SideChatSource', discriminantValue: 'sideChat' },
+  ],
+};
+
+const CHAT_MOVE_DESTINATION_UNION: UnionConfig = {
+  name: 'ChatMoveDestination',
+  discriminantField: 'kind',
+  variants: [
+    { caseName: 'Session', structName: 'ChatMoveToSessionDestination', discriminantValue: 'session' },
+    { caseName: 'NewSession', structName: 'ChatMoveToNewSessionDestination', discriminantValue: 'newSession' },
   ],
 };
 
@@ -1964,6 +2019,10 @@ function generateCommandsFile(project: Project): string {
   lines.push('// ─── ChatSource Union ───────────────────────────────────────────────────────');
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, CHAT_SOURCE_UNION));
+  lines.push('');
+  lines.push('// ─── ChatMoveDestination Union ──────────────────────────────────────────────');
+  lines.push('');
+  lines.push(generateDiscriminatedUnion(project, CHAT_MOVE_DESTINATION_UNION));
   lines.push('');
 
   lines.push('// ─── ReconnectResult Union ──────────────────────────────────────────────────');
@@ -2336,6 +2395,7 @@ function checkExhaustiveness(project: Project): void {
     'ChatInputAnswer',           // CHAT_INPUT_ANSWER_UNION discriminated union
     'ChatOrigin',                // hand-generated union for inline variants
     'ChatSource',                // CHAT_SOURCE_UNION discriminated union
+    'ChatMoveDestination',       // CHAT_MOVE_DESTINATION_UNION discriminated union
     'ChatToolCallApprovedAction', // merged into ChatToolCallConfirmedAction
     'ChatToolCallDeniedAction',   // merged into ChatToolCallConfirmedAction
     'ChatToolCallConfirmedAction', // emitted as merged variant
@@ -2350,6 +2410,7 @@ function checkExhaustiveness(project: Project): void {
     'ToolCallRiskAssessment',       // TOOL_CALL_RISK_ASSESSMENT_UNION discriminated union
     'TerminalLifecycleState',       // TERMINAL_LIFECYCLE_STATE_UNION discriminated union
     'SessionInputRequest',          // SESSION_INPUT_REQUEST_UNION discriminated union
+    'BackgroundWork',               // BACKGROUND_WORK_UNION discriminated union
     'ToolCallConfirmationState',    // TOOL_CALL_CONFIRMATION_STATE_UNION discriminated union
     'ChildCustomizationType',       // TS subset alias of CustomizationType; consumers reuse CustomizationType
     'CustomizationLoadState',       // CUSTOMIZATION_LOAD_STATE_UNION discriminated union
@@ -2364,6 +2425,7 @@ function checkExhaustiveness(project: Project): void {
     'ReconnectResult',              // RECONNECT_RESULT_UNION discriminated union
     'SessionOrigin',                // SESSION_ORIGIN_UNION discriminated union
     'AutomationTrigger',            // AUTOMATION_TRIGGER_UNION discriminated union
+    'AutomationDisableCondition', // AUTOMATION_DISABLE_CONDITION_UNION discriminated union
     'AutomationRunOrigin',          // AUTOMATION_RUN_ORIGIN_UNION discriminated union
     'AutomationRunLifecycle',       // AUTOMATION_RUN_LIFECYCLE_UNION discriminated union
     'ForkChatSource',               // generateFixedChatSourceBranchKotlin()

@@ -57,14 +57,14 @@ use ahp_types::actions::{
     ChatTurnStartedAction, StateAction,
 };
 use ahp_types::state::{
-    ActiveTurn, AnnotationsState, AutomationRunState, AutomationState, ChangesetOperationStatus,
-    ChangesetState, ChangesetStatus, ChatInputRequest, ChatState, ChildCustomization,
-    ConfirmationOption, Customization, CustomizationEnablement, ErrorResponsePart,
-    InputRequestResponsePart, McpServerStartingState, McpServerState, McpServerStoppedState,
-    PendingMessage, PendingMessageKind, ResourceWatchState, ResponsePart, RootState,
-    SessionInputRequest, SessionLifecycle, SessionState, SessionStatus, TerminalCommandPart,
-    TerminalContentPart, TerminalExitedLifecycleState, TerminalLifecycleState, TerminalState,
-    TerminalUnclassifiedPart, ToolCallAuthRequiredState, ToolCallCancellationReason,
+    ActiveTurn, AnnotationsState, AutomationRunState, AutomationState, BackgroundWork, CanvasState,
+    ChangesetOperationStatus, ChangesetState, ChangesetStatus, ChatInputRequest, ChatState,
+    ChildCustomization, ConfirmationOption, Customization, CustomizationEnablement,
+    ErrorResponsePart, InputRequestResponsePart, McpServerCustomization, McpServerStartingState,
+    McpServerState, McpServerStoppedState, PendingMessage, PendingMessageKind, ResourceWatchState,
+    ResponsePart, RootState, SessionInputRequest, SessionLifecycle, SessionState, SessionStatus,
+    TerminalCommandPart, TerminalContentPart, TerminalExitedLifecycleState, TerminalLifecycleState,
+    TerminalState, TerminalUnclassifiedPart, ToolCallAuthRequiredState, ToolCallCancellationReason,
     ToolCallCancelledState, ToolCallCompletedState, ToolCallConfirmationReason,
     ToolCallContributor, ToolCallPendingConfirmationState, ToolCallPendingResultConfirmationState,
     ToolCallResponsePart, ToolCallRunningState, ToolCallState, ToolCallStatus,
@@ -483,6 +483,14 @@ fn session_input_request_id(r: &SessionInputRequest) -> Option<&str> {
     }
 }
 
+fn background_work_id(w: &BackgroundWork) -> Option<&str> {
+    match w {
+        BackgroundWork::Shell(x) => Some(x.id.as_str()),
+        BackgroundWork::Subagent(x) => Some(x.id.as_str()),
+        BackgroundWork::Unknown(v) => v.get("id").and_then(serde_json::Value::as_str),
+    }
+}
+
 fn child_id_of(c: &ChildCustomization) -> Option<&str> {
     match c {
         ChildCustomization::Agent(x) => Some(x.id.as_str()),
@@ -741,6 +749,9 @@ pub fn apply_action_to_session(state: &mut SessionState, action: &StateAction) -
             if let Some(modified_at) = &a.changes.modified_at {
                 chat.modified_at = modified_at.clone();
             }
+            if let Some(changes) = &a.changes.changes {
+                chat.changes = Some(changes.clone());
+            }
             if let Some(origin) = &a.changes.origin {
                 chat.origin = Some(origin.clone());
             }
@@ -751,6 +762,30 @@ pub fn apply_action_to_session(state: &mut SessionState, action: &StateAction) -
         }
         StateAction::SessionDefaultChatChanged(a) => {
             state.default_chat = a.default_chat.clone();
+            ReduceOutcome::Applied
+        }
+        StateAction::SessionChatsReordered(a) => {
+            let unique: std::collections::HashSet<&str> =
+                a.chats.iter().map(String::as_str).collect();
+            if a.chats.len() != state.chats.len() || unique.len() != state.chats.len() {
+                return ReduceOutcome::NoOp;
+            }
+            if a.chats
+                .iter()
+                .zip(&state.chats)
+                .all(|(resource, summary)| resource == &summary.resource)
+            {
+                return ReduceOutcome::NoOp;
+            }
+            let mut reordered = Vec::with_capacity(a.chats.len());
+            for resource in &a.chats {
+                let Some(summary) = state.chats.iter().find(|chat| &chat.resource == resource)
+                else {
+                    return ReduceOutcome::NoOp;
+                };
+                reordered.push(summary.clone());
+            }
+            state.chats = reordered;
             ReduceOutcome::Applied
         }
         StateAction::SessionTitleChanged(a) => {
@@ -965,9 +1000,21 @@ pub fn apply_action_to_session(state: &mut SessionState, action: &StateAction) -
         StateAction::SessionMcpServerStartRequested(a) => update_mcp_server_customization_state(
             state,
             &a.id,
-            McpServerState::Starting(McpServerStartingState {}),
+            McpServerState::Starting(McpServerStartingState { blocking: None }),
             None,
         ),
+        StateAction::SessionMcpServerBackgroundRequested(a) => {
+            let Some(m) = find_mcp_server_customization_mut(state, &a.id) else {
+                return ReduceOutcome::NoOp;
+            };
+            match &mut m.state {
+                McpServerState::Starting(s) if s.blocking == Some(true) => {
+                    s.blocking = Some(false);
+                    ReduceOutcome::Applied
+                }
+                _ => ReduceOutcome::NoOp,
+            }
+        }
         StateAction::SessionMcpServerStopRequested(a) => update_mcp_server_customization_state(
             state,
             &a.id,
@@ -984,34 +1031,40 @@ fn update_mcp_server_customization_state(
     next_state: McpServerState,
     channel: Option<String>,
 ) -> ReduceOutcome {
-    let Some(list) = state.customizations.as_mut() else {
+    let Some(m) = find_mcp_server_customization_mut(state, id) else {
         return ReduceOutcome::NoOp;
     };
+    m.state = next_state;
+    m.channel = channel;
+    ReduceOutcome::Applied
+}
+
+/// Locate the [`McpServerCustomization`] with `id`, searching the top-level
+/// list first and then every container's children. Returns `None` when no
+/// entry matches or the id targets a non-MCP customization.
+fn find_mcp_server_customization_mut<'a>(
+    state: &'a mut SessionState,
+    id: &str,
+) -> Option<&'a mut McpServerCustomization> {
+    let list = state.customizations.as_mut()?;
     if let Some(idx) = list.iter().position(|c| customization_id(c) == Some(id)) {
-        match &mut list[idx] {
-            Customization::McpServer(m) => {
-                m.state = next_state;
-                m.channel = channel;
-                return ReduceOutcome::Applied;
-            }
-            // Top-level entry exists but isn't an MCP server: no-op.
-            _ => return ReduceOutcome::NoOp,
-        }
+        return match &mut list[idx] {
+            Customization::McpServer(m) => Some(&mut **m),
+            _ => None,
+        };
     }
     for container in list.iter_mut() {
         let Some(children) = container_children_mut(container) else {
             continue;
         };
         if let Some(idx) = children.iter().position(|c| child_id_of(c) == Some(id)) {
-            if let ChildCustomization::McpServer(m) = &mut children[idx] {
-                m.state = next_state;
-                m.channel = channel;
-                return ReduceOutcome::Applied;
-            }
-            return ReduceOutcome::NoOp;
+            return match &mut children[idx] {
+                ChildCustomization::McpServer(m) => Some(&mut **m),
+                _ => None,
+            };
         }
     }
-    ReduceOutcome::NoOp
+    None
 }
 
 // ─── Chat Reducer ─────────────────────────────────────────────────────
@@ -1099,6 +1152,46 @@ pub fn apply_action_to_chat(state: &mut ChatState, action: &StateAction) -> Redu
         }
         StateAction::ChatActivityChanged(a) => {
             state.activity = a.activity.clone();
+            ReduceOutcome::Applied
+        }
+        StateAction::ChatBackgroundWorkSet(a) => {
+            let Some(action_id) = background_work_id(&a.work) else {
+                return ReduceOutcome::NoOp;
+            };
+            let list = state.background_work.get_or_insert_with(Vec::new);
+            if let Some(idx) = list
+                .iter()
+                .position(|w| background_work_id(w) == Some(action_id))
+            {
+                list[idx] = a.work.clone();
+            } else {
+                list.push(a.work.clone());
+            }
+            ReduceOutcome::Applied
+        }
+        StateAction::ChatBackgroundWorkRemoved(a) => {
+            let Some(list) = state.background_work.as_mut() else {
+                return ReduceOutcome::NoOp;
+            };
+            let Some(idx) = list
+                .iter()
+                .position(|w| background_work_id(w) == Some(a.id.as_str()))
+            else {
+                return ReduceOutcome::NoOp;
+            };
+            list.remove(idx);
+            ReduceOutcome::Applied
+        }
+        StateAction::ChatMovableChanged(a) => {
+            state.movable = Some(a.movable);
+            ReduceOutcome::Applied
+        }
+        StateAction::ChatChangesetsChanged(a) => {
+            state.changesets = a.changesets.clone();
+            ReduceOutcome::Applied
+        }
+        StateAction::ChatCanvasesChanged(a) => {
+            state.canvases = a.canvases.clone();
             ReduceOutcome::Applied
         }
         StateAction::ChatWorkingDirectorySet(a) => {
@@ -1318,6 +1411,14 @@ pub fn apply_action_to_chat(state: &mut ChatState, action: &StateAction) -> Redu
         }
         StateAction::ChatDraftChanged(a) => {
             state.draft = a.draft.clone();
+            ReduceOutcome::Applied
+        }
+        StateAction::ChatIsReadChanged(a) => {
+            state.status = with_status_flag(state.status, SessionStatus::IsRead, a.is_read);
+            ReduceOutcome::Applied
+        }
+        StateAction::ChatIsArchivedChanged(a) => {
+            state.status = with_status_flag(state.status, SessionStatus::IsArchived, a.is_archived);
             ReduceOutcome::Applied
         }
         _ => ReduceOutcome::OutOfScope,
@@ -1777,6 +1878,17 @@ fn apply_input_answer_changed(
     ReduceOutcome::Applied
 }
 
+/// Apply a [`StateAction`] to a [`CanvasState`] in place.
+pub fn apply_action_to_canvas(state: &mut CanvasState, action: &StateAction) -> ReduceOutcome {
+    match action {
+        StateAction::CanvasStateChanged(a) => {
+            *state = a.canvas.clone();
+            ReduceOutcome::Applied
+        }
+        _ => ReduceOutcome::OutOfScope,
+    }
+}
+
 // ─── Terminal Reducer ─────────────────────────────────────────────────
 
 /// Apply a [`StateAction`] to a [`TerminalState`] in place.
@@ -2195,10 +2307,15 @@ mod tests {
             title: String::new(),
             status: SessionStatus::Idle.bits(),
             activity: None,
+            background_work: None,
             modified_at: "1970-01-01T00:00:00.000Z".into(),
+            changes: None,
             origin: None,
+            movable: None,
             interactivity: None,
             working_directories: None,
+            changesets: None,
+            canvases: None,
             turns: Vec::new(),
             turns_next_cursor: None,
             active_turn: None,
@@ -2352,7 +2469,9 @@ mod tests {
             status: SessionStatus::Idle.bits(),
             activity: None,
             modified_at: "1970-01-01T00:00:00.000Z".into(),
+            changes: None,
             origin: None,
+            movable: None,
             interactivity: None,
             working_directories: None,
         };
@@ -2612,6 +2731,14 @@ mod tests {
                     expected,
                     &parsed_actions,
                     apply_action_to_chat,
+                    &file_name,
+                    description,
+                ),
+                "canvas" => run_fixture::<CanvasState>(
+                    initial,
+                    expected,
+                    &parsed_actions,
+                    apply_action_to_canvas,
                     &file_name,
                     description,
                 ),

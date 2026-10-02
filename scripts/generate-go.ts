@@ -174,6 +174,7 @@ function mapType(tsType: string): string {
     tsType === 'RootState | SessionState | TerminalState | ChangesetState | ResourceWatchState | AnnotationsState' ||
     tsType === 'RootState | SessionState | TerminalState | ChangesetState | ResourceWatchState | AnnotationsState | ChatState' ||
     tsType === 'RootState | SessionState | TerminalState | ChangesetState | ResourceWatchState | AnnotationsState | ChatState | AutomationState | AutomationRunState' ||
+    tsType === 'RootState | SessionState | TerminalState | ChangesetState | ResourceWatchState | AnnotationsState | ChatState | CanvasState | AutomationState | AutomationRunState' ||
     tsType === 'RootState | SessionState | ChatState | TerminalState | ChangesetState' ||
     tsType === 'RootState | SessionState | ChatState | TerminalState | ChangesetState | AnnotationsState'
   ) {
@@ -358,8 +359,11 @@ function extractProps(iface: InterfaceDeclaration, project: Project): GoProp[] {
     // token: optional null-able stays a single pointer (avoid `**T`).
     const alreadyPointer = goType.startsWith('*');
     const optional = hasQuestionToken || hasUnionUndefined || alreadyPointer;
-    const presenceSensitiveCollection = iface.getName() === 'AutomationDefinitionPatch'
-      && (tsName === 'triggers' || tsName === '_meta');
+    const presenceSensitiveCollection = (iface.getName() === 'AutomationDefinitionPatch'
+      && (tsName === 'triggers' || tsName === '_meta'))
+      || ((iface.getName() === 'AutomationDefinition' || iface.getName() === 'AutomationDefinitionPatch')
+        && tsName === 'disableConditions')
+      || (tsName === 'backgroundWork' && iface.getName() === 'ChatState');
     if (optional && !alreadyPointer && (presenceSensitiveCollection || (!goType.startsWith('[]') && !goType.startsWith('map[')))) {
       goType = `*${goType}`;
     }
@@ -723,10 +727,12 @@ const STATE_ENUMS = [
   'ConfirmationOptionKind', 'ToolCallContributorKind',
   'ToolResultContentType', 'CustomizationType', 'CustomizationEnablementKind', 'CustomizationLoadStatus',
   'TerminalClaimKind', 'TerminalLifecycleStatus',
+  'BackgroundWorkKind',
   'McpServerStatus', 'McpAuthRequiredReason',
   'ChangesetStatus', 'ChangesetOperationStatus', 'ChangesetOperationScope', 'ResourceChangeType',
   'SessionOriginKind',
   'AutomationOperation', 'AutomationMisfirePolicy', 'AutomationTriggerKind',
+  'AutomationDisableConditionKind',
   'AutomationRunStatus', 'AutomationRunOriginKind',
 ];
 
@@ -751,9 +757,14 @@ const STATE_STRUCTS: { name: string; omitDiscriminants?: boolean; goName?: strin
   { name: 'SessionToolClientExecutionRequest' },
   { name: 'SessionToolAuthenticationRequest' },
   { name: 'SessionSummary' },
+  { name: 'SessionChatSummary' },
   { name: 'ChangesSummary' },
   { name: 'ChatState' },
+  { name: 'CanvasReference' },
+  { name: 'CanvasState' },
   { name: 'ChatSummary' },
+  { name: 'BackgroundShellWork' },
+  { name: 'BackgroundSubagentWork' },
   { name: 'SideChatSelection' },
   { name: 'PendingMessage' },
   { name: 'ProjectInfo' },
@@ -837,7 +848,10 @@ const STATE_STRUCTS: { name: string; omitDiscriminants?: boolean; goName?: strin
   { name: 'McpAuthRequirement' },
   { name: 'ToolCallClientContributor' },
   { name: 'ToolCallMcpContributor' },
+  { name: 'FileEditSide' },
+  { name: 'FileEditDiffStats' },
   { name: 'FileEdit' },
+  { name: 'FileEditCollection' },
   { name: 'TerminalCommandResult' },
   { name: 'TerminalInfo' },
   { name: 'TerminalClientClaim' },
@@ -872,6 +886,8 @@ const STATE_STRUCTS: { name: string; omitDiscriminants?: boolean; goName?: strin
   { name: 'AutomationSessionTemplate' },
   { name: 'AutomationDefinition' },
   { name: 'AutomationDefinitionPatch' },
+  { name: 'AutomationAfterRunsCondition' },
+  { name: 'AutomationAfterDateCondition' },
   { name: 'AutomationEntry' },
   { name: 'AutomationState' },
   { name: 'AutomationManualRunOrigin' },
@@ -1119,6 +1135,17 @@ const SESSION_INPUT_REQUEST_UNION: UnionConfig = {
   unknown: true,
 };
 
+const BACKGROUND_WORK_UNION: UnionConfig = {
+  name: 'BackgroundWork',
+  discriminantField: 'kind',
+  doc: 'BackgroundWork is work that keeps running after the tool call that started it returns and will resume the owning chat when it finishes.',
+  variants: [
+    { variantName: 'Shell', innerType: 'BackgroundShellWork', wireValue: 'shell' },
+    { variantName: 'Subagent', innerType: 'BackgroundSubagentWork', wireValue: 'subagent' },
+  ],
+  unknown: true,
+};
+
 const SESSION_ORIGIN_UNION: UnionConfig = {
   name: 'SessionOrigin',
   discriminantField: 'kind',
@@ -1136,6 +1163,17 @@ const AUTOMATION_TRIGGER_UNION: UnionConfig = {
   variants: [
     { variantName: 'Schedule', innerType: 'AutomationScheduleTrigger', wireValue: 'schedule' },
     { variantName: 'Event', innerType: 'AutomationEventTrigger', wireValue: 'event' },
+  ],
+  injectDiscriminantOnMarshal: true,
+};
+
+const AUTOMATION_DISABLE_CONDITION_UNION: UnionConfig = {
+  name: 'AutomationDisableCondition',
+  discriminantField: 'kind',
+  doc: 'AutomationDisableCondition is an automation\'s self-disable rule.',
+  variants: [
+    { variantName: 'AfterRuns', innerType: 'AutomationAfterRunsCondition', wireValue: 'afterRuns' },
+    { variantName: 'AfterDate', innerType: 'AutomationAfterDateCondition', wireValue: 'afterDate' },
   ],
   injectDiscriminantOnMarshal: true,
 };
@@ -1265,16 +1303,17 @@ func (o ChatOrigin) MarshalJSON() ([]byte, error) {
 
 function generateSnapshotState(): string {
   return `// SnapshotState is the state payload of a snapshot — root, session,
-// chat, terminal, changeset, resource-watch, annotations, automation catalogue,
+// chat, canvas, terminal, changeset, resource-watch, annotations, automation catalogue,
 // or automation-run state. The active
 // variant is chosen by which pointer field is non-nil; UnmarshalJSON probes
 // for required fields in the canonical order
-// (automationRun → automations → session → chat → terminal → changeset →
+// (automationRun → automations → session → chat → canvas → terminal → changeset →
 // resourceWatch → annotations → root).
 type SnapshotState struct {
 \tRoot          *RootState          \`json:"-"\`
 \tSession       *SessionState       \`json:"-"\`
 \tChat          *ChatState          \`json:"-"\`
+\tCanvas        *CanvasState        \`json:"-"\`
 \tTerminal      *TerminalState      \`json:"-"\`
 \tChangeset     *ChangesetState     \`json:"-"\`
 \tResourceWatch *ResourceWatchState \`json:"-"\`
@@ -1294,6 +1333,8 @@ func (s SnapshotState) MarshalJSON() ([]byte, error) {
 \t\treturn json.Marshal(s.Session)
 \tcase s.Chat != nil:
 \t\treturn json.Marshal(s.Chat)
+\tcase s.Canvas != nil:
+\t\treturn json.Marshal(s.Canvas)
 \tcase s.Terminal != nil:
 \t\treturn json.Marshal(s.Terminal)
 \tcase s.Changeset != nil:
@@ -1342,6 +1383,12 @@ func (s *SnapshotState) UnmarshalJSON(data []byte) error {
 \t\t\treturn err
 \t\t}
 \t\ts.Chat = &v
+\tcase containsAll(probe, "instanceId", "extensionId", "canvasId"):
+\t\tvar v CanvasState
+\t\tif err := json.Unmarshal(data, &v); err != nil {
+\t\t\treturn err
+\t\t}
+\t\ts.Canvas = &v
 \tcase containsAll(probe, "content"):
 \t\tvar v TerminalState
 \t\tif err := json.Unmarshal(data, &v); err != nil {
@@ -1490,10 +1537,13 @@ function generateStateFile(project: Project): string {
   lines.push(generateDiscriminatedUnion(project, TERMINAL_LIFECYCLE_STATE_UNION));
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, SESSION_INPUT_REQUEST_UNION));
+  lines.push(generateDiscriminatedUnion(project, BACKGROUND_WORK_UNION));
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, SESSION_ORIGIN_UNION));
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, AUTOMATION_TRIGGER_UNION));
+  lines.push('');
+  lines.push(generateDiscriminatedUnion(project, AUTOMATION_DISABLE_CONDITION_UNION));
   lines.push('');
   lines.push(generateDiscriminatedUnion(project, AUTOMATION_RUN_ORIGIN_UNION));
   lines.push('');
@@ -1522,6 +1572,7 @@ const ACTION_VARIANTS: {
   { type: 'session/chatAdded', variantName: 'SessionChatAdded', tsInterface: 'SessionChatAddedAction' },
   { type: 'session/chatRemoved', variantName: 'SessionChatRemoved', tsInterface: 'SessionChatRemovedAction' },
   { type: 'session/chatUpdated', variantName: 'SessionChatUpdated', tsInterface: 'SessionChatUpdatedAction' },
+  { type: 'session/chatsReordered', variantName: 'SessionChatsReordered', tsInterface: 'SessionChatsReorderedAction' },
   { type: 'session/defaultChatChanged', variantName: 'SessionDefaultChatChanged', tsInterface: 'SessionDefaultChatChangedAction' },
   { type: 'chat/turnStarted', variantName: 'ChatTurnStarted', tsInterface: 'ChatTurnStartedAction' },
   { type: 'chat/delta', variantName: 'ChatDelta', tsInterface: 'ChatDeltaAction' },
@@ -1540,6 +1591,12 @@ const ACTION_VARIANTS: {
   { type: 'chat/error', variantName: 'ChatError', tsInterface: 'ChatErrorAction' },
   { type: 'chat/turnResume', variantName: 'ChatTurnResume', tsInterface: 'ChatTurnResumeAction' },
   { type: 'chat/activityChanged', variantName: 'ChatActivityChanged', tsInterface: 'ChatActivityChangedAction' },
+  { type: 'chat/backgroundWorkSet', variantName: 'ChatBackgroundWorkSet', tsInterface: 'ChatBackgroundWorkSetAction' },
+  { type: 'chat/backgroundWorkRemoved', variantName: 'ChatBackgroundWorkRemoved', tsInterface: 'ChatBackgroundWorkRemovedAction' },
+  { type: 'chat/movableChanged', variantName: 'ChatMovableChanged', tsInterface: 'ChatMovableChangedAction' },
+  { type: 'chat/changesetsChanged', variantName: 'ChatChangesetsChanged', tsInterface: 'ChatChangesetsChangedAction' },
+  { type: 'chat/canvasesChanged', variantName: 'ChatCanvasesChanged', tsInterface: 'ChatCanvasesChangedAction' },
+  { type: 'canvas/stateChanged', variantName: 'CanvasStateChanged', tsInterface: 'CanvasStateChangedAction' },
   { type: 'session/titleChanged', variantName: 'SessionTitleChanged', tsInterface: 'SessionTitleChangedAction' },
   { type: 'chat/usage', variantName: 'ChatUsage', tsInterface: 'ChatUsageAction' },
   { type: 'chat/reasoning', variantName: 'ChatReasoning', tsInterface: 'ChatReasoningAction' },
@@ -1547,6 +1604,8 @@ const ACTION_VARIANTS: {
   { type: 'chat/pendingMessageRemoved', variantName: 'ChatPendingMessageRemoved', tsInterface: 'ChatPendingMessageRemovedAction' },
   { type: 'chat/queuedMessagesReordered', variantName: 'ChatQueuedMessagesReordered', tsInterface: 'ChatQueuedMessagesReorderedAction' },
   { type: 'chat/draftChanged', variantName: 'ChatDraftChanged', tsInterface: 'ChatDraftChangedAction' },
+  { type: 'chat/isReadChanged', variantName: 'ChatIsReadChanged', tsInterface: 'ChatIsReadChangedAction' },
+  { type: 'chat/isArchivedChanged', variantName: 'ChatIsArchivedChanged', tsInterface: 'ChatIsArchivedChangedAction' },
   { type: 'chat/inputRequested', variantName: 'ChatInputRequested', tsInterface: 'ChatInputRequestedAction' },
   { type: 'chat/inputAnswerChanged', variantName: 'ChatInputAnswerChanged', tsInterface: 'ChatInputAnswerChangedAction' },
   { type: 'chat/inputCompleted', variantName: 'ChatInputCompleted', tsInterface: 'ChatInputCompletedAction' },
@@ -1573,6 +1632,7 @@ const ACTION_VARIANTS: {
   { type: 'session/mcpServerStateChanged', variantName: 'SessionMcpServerStateChanged', tsInterface: 'SessionMcpServerStateChangedAction' },
   { type: 'session/mcpServerStartRequested', variantName: 'SessionMcpServerStartRequested', tsInterface: 'SessionMcpServerStartRequestedAction' },
   { type: 'session/mcpServerStopRequested', variantName: 'SessionMcpServerStopRequested', tsInterface: 'SessionMcpServerStopRequestedAction' },
+  { type: 'session/mcpServerBackgroundRequested', variantName: 'SessionMcpServerBackgroundRequested', tsInterface: 'SessionMcpServerBackgroundRequestedAction' },
   { type: 'session/configChanged', variantName: 'SessionConfigChanged', tsInterface: 'SessionConfigChangedAction' },
   { type: 'session/metaChanged', variantName: 'SessionMetaChanged', tsInterface: 'SessionMetaChangedAction' },
   { type: 'changeset/statusChanged', variantName: 'ChangesetStatusChanged', tsInterface: 'ChangesetStatusChangedAction' },
@@ -1711,7 +1771,7 @@ function generateActionsFile(project: Project): string {
 
 // ─── Commands File Generator ─────────────────────────────────────────────────
 
-const COMMAND_ENUMS = ['ReconnectResultType', 'ChatSourceKind', 'ContentEncoding', 'CompletionItemKind', 'ResourceType', 'ResourceWriteMode'];
+const COMMAND_ENUMS = ['ReconnectResultType', 'ChatSourceKind', 'ChatMoveDestinationKind', 'ContentEncoding', 'CompletionItemKind', 'ResourceType', 'ResourceWriteMode'];
 
 const COMMAND_STRUCTS: { name: string; omitDiscriminants?: boolean; goName?: string }[] = [
   { name: 'InitializeParams' }, { name: 'InitializeResult' },
@@ -1719,6 +1779,7 @@ const COMMAND_STRUCTS: { name: string; omitDiscriminants?: boolean; goName?: str
   { name: 'AutomationCreateCapability' },
   { name: 'AutomationScheduleCapabilities' },
   { name: 'AutomationRunCancellationCapability' },
+  { name: 'AutomationCustomizationsCapability' },
   { name: 'Implementation' },
   { name: 'ReconnectParams' },
   { name: 'ReconnectReplayResult', omitDiscriminants: true },
@@ -1727,6 +1788,7 @@ const COMMAND_STRUCTS: { name: string; omitDiscriminants?: boolean; goName?: str
   { name: 'CreateSessionParams' },
   { name: 'DisposeSessionParams' },
   { name: 'ForkChatSource' }, { name: 'SideChatSource' }, { name: 'CreateChatParams' }, { name: 'DisposeChatParams' },
+  { name: 'ChatMoveToSessionDestination' }, { name: 'ChatMoveToNewSessionDestination' }, { name: 'MoveChatParams' }, { name: 'MoveChatResult' },
   { name: 'ListSessionsParams' }, { name: 'ListSessionsResult' },
   { name: 'ResourceReadParams' }, { name: 'ResourceReadResult' },
   { name: 'ResourceWriteParams' }, { name: 'ResourceWriteResult' },
@@ -1771,6 +1833,16 @@ const CHAT_SOURCE_UNION: UnionConfig = {
   variants: [
     { variantName: 'Fork', innerType: 'ForkChatSource', wireValue: 'fork' },
     { variantName: 'SideChat', innerType: 'SideChatSource', wireValue: 'sideChat' },
+  ],
+};
+
+const CHAT_MOVE_DESTINATION_UNION: UnionConfig = {
+  name: 'ChatMoveDestination',
+  discriminantField: 'kind',
+  doc: 'Destination of an atomic chat move.',
+  variants: [
+    { variantName: 'Session', innerType: 'ChatMoveToSessionDestination', wireValue: 'session' },
+    { variantName: 'NewSession', innerType: 'ChatMoveToNewSessionDestination', wireValue: 'newSession' },
   ],
 };
 
@@ -1939,11 +2011,16 @@ function generateCommandsFile(project: Project): string {
   lines.push('');
   lines.push(generateFixedDiscriminantMethods('SideChatSource', 'kind', 'sideChat', 'ChatSourceKind'));
   lines.push('');
-
+  lines.push(generateFixedDiscriminantMethods('ChatMoveToSessionDestination', 'kind', 'session', 'ChatMoveDestinationKind'));
+  lines.push('');
+  lines.push(generateFixedDiscriminantMethods('ChatMoveToNewSessionDestination', 'kind', 'newSession', 'ChatMoveDestinationKind'));
+  lines.push('');
   lines.push('// ─── ChatSource Union ─────────────────────────────────────────────────\n');
   lines.push(generateDiscriminatedUnion(project, CHAT_SOURCE_UNION));
   lines.push('');
-
+  lines.push('// ─── ChatMoveDestination Union ────────────────────────────────────────\n');
+  lines.push(generateDiscriminatedUnion(project, CHAT_MOVE_DESTINATION_UNION));
+  lines.push('');
   lines.push('// ─── ReconnectResult Union ────────────────────────────────────────────\n');
   lines.push(generateDiscriminatedUnion(project, RECONNECT_RESULT_UNION));
   lines.push('');
@@ -2302,6 +2379,7 @@ function checkExhaustiveness(project: Project): void {
     'TerminalContentPart',
     'ChatOrigin',
     'ChatSource',
+    'ChatMoveDestination',
     'ChatInputQuestion',
     'ChatInputAnswerValue',
     'ChatInputAnswer',
@@ -2317,10 +2395,12 @@ function checkExhaustiveness(project: Project): void {
     'ToolCallRiskAssessment',
     'TerminalLifecycleState',
     'SessionInputRequest',
+    'BackgroundWork',
     'ToolCallConfirmationState',
     'ReconnectResult',
     'SessionOrigin',
     'AutomationTrigger',
+    'AutomationDisableCondition',
     'AutomationRunOrigin',
     'AutomationRunLifecycle',
     'AuthRequiredErrorData',

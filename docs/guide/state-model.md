@@ -52,6 +52,8 @@ ConfigPropertySchema {
   enumLabels?: string[]          // display labels (parallel array)
   enumDescriptions?: string[]    // descriptions (parallel array)
   readOnly?: boolean
+  minItems?: number              // array cardinality (when type is 'array')
+  maxItems?: number
 }
 ```
 
@@ -110,6 +112,7 @@ SessionSummary {
   workingDirectories?: URI[]   // equal-peer working directories
   annotations?: AnnotationsSummary
   changes?: ChangesSummary
+  chats?: SessionChatSummary[] // compact list presentation, including per-chat status
 }
 
 ProjectInfo {
@@ -117,6 +120,14 @@ ProjectInfo {
   displayName: string
 }
 ```
+
+`SessionChatSummary.status` is the same `SessionStatus` bitset as
+`ChatSummary.status`, including activity, read, and archived state. Hosts keep
+both projections synchronized with the chat's state so session lists can
+render per-chat status without subscribing to every session or chat. Clients
+check `SessionStatus.IsRead` and `SessionStatus.IsArchived` with bitwise
+operations rather than separate boolean fields. The compact `status` field
+is optional to ease adoption; absence means unknown, not unread or unarchived.
 
 The `status` bitset encodes both the session's activity state and metadata flags like read/archived state. See the [Session Status Bitset](#session-status-bitset) table below for details.
 
@@ -130,16 +141,46 @@ The `status` bitset encodes both the session's activity state and metadata flags
 | `SessionStatus.Error`       |   `2` | `1 << 1`               | The most recent turn ended with an error.                                                                                                                                             |
 | `SessionStatus.InProgress`  |   `8` | `1 << 3`               | A turn is active.                                                                                                                                                                     |
 | `SessionStatus.InputNeeded` |  `24` | `(1 << 3) \| (1 << 4)` | A turn is active and either at least one user input request is open, or at least one tool call is awaiting user confirmation (pre- or post-execution). Includes the `InProgress` bit. |
-| `SessionStatus.IsRead`      |  `32` | `1 << 5`               | The client has viewed this session since its last modification. Cleared automatically when a new turn starts or an input request arrives. Toggled via `session/isReadChanged`.        |
+| `SessionStatus.IsRead`      |  `32` | `1 << 5`               | The client has viewed this session or chat since its last modification. Cleared automatically when a new turn starts or an input request arrives. Toggled via `session/isReadChanged` or `chat/isReadChanged` on the corresponding channel. |
 | `SessionStatus.IsArchived`  |  `64` | `1 << 6`               | The session has been archived by the client. Toggled via `session/isArchivedChanged`.                                                                                                 |
 
 Bits 0–4 encode mutually-exclusive **activity** status (exactly one is set at a time). Bits 5+ encode orthogonal **metadata** flags that may be combined with any activity status via bitwise OR.
+
+Read state is scoped to the addressed channel. `chat/isReadChanged` changes any
+known chat, including a default chat, without changing its owning session or
+sibling chats. `session/isReadChanged` changes only the session's independent
+read state.
 
 For example, `(status & SessionStatus.InProgress) !== 0` is true for both `InProgress` and `InputNeeded`. A session that is idle, read, and archived has status `1 | 32 | 64 = 97`.
 
 ## Chat State
 
 Subscribable on a [Chat Channel](/specification/chat-channel) at `ahp-chat:/<cid>`. A session is a catalog of chats (`SessionState.chats`); each chat carries the per-conversation state — the turn history, the active turn and its streaming response parts (including live input requests), tool calls, steering/queued messages, and the user's in-progress draft. A session starts with a default chat (`SessionState.defaultChat`); hosts advertising the `multipleChats` capability let clients open more via `createChat`.
+
+`backgroundWork` lists work running in the background for the chat, such as shells
+and subagents.
+Hosts publish complete entries with `chat/backgroundWorkSet` and remove them with
+`chat/backgroundWorkRemoved` when they finish or are no longer tracked. Entry IDs are
+opaque, unique within a chat across all kinds, and scoped to that chat. Like
+`changesets`, the list is not mirrored into `SessionState.chats`; clients read it by
+subscribing to the chat.
+
+Each entry has a `kind`, a `label`, and a start time. Every entry is unfinished work;
+hosts remove entries when the work finishes rather than marking them done. A shell
+entry adds its plain-text command and, when the host has one, the terminal carrying
+its output. Shells can be tied to the agent's lifetime (attached) or outlive it
+(detached); that distinction is provider-specific and goes in the shell's `_meta`. A
+subagent entry points to the subagent's own chat instead of repeating its state. The
+kind set is non-exhaustive: clients should keep entries of unknown kinds and may
+render them from the common fields. Other provider-specific details also belong in
+`_meta`.
+
+The collection survives turn completion, cancellation, steering, and history
+truncation; those actions do not establish whether the work has stopped. Hosts must
+reconcile the runtime's current inventory after restoring a chat, rather than replaying
+historical work as running. A missing collection means no inventory has been
+published; an empty collection contains no active work. This metadata does not
+provide process controls or a new turn-completion rule.
 
 ```typescript
 ChatState {
@@ -151,6 +192,7 @@ ChatState {
   modifiedAt: string
   origin?: ChatOrigin      // how the chat came to exist (user / fork / sideChat / tool)
   workingDirectories?: URI[]      // subset of session's workingDirectories
+  changesets?: Changeset[]        // per-chat Branch, Uncommitted Changes, etc.
 
   turns: Turn[]                       // completed turns
   turnsNextCursor?: string            // page older turns via fetchTurns
@@ -160,6 +202,13 @@ ChatState {
   draft?: Message                     // user's in-progress input
 }
 ```
+
+`changesets` is state-only and deliberately omitted from the lightweight
+`ChatSummary`. Active clients discover it by subscribing to the chat, then
+subscribe to each advertised `Changeset.uriTemplate` through the existing
+changeset channel contract. Hosts scope a chat's catalogue to its effective
+working directories: the chat's subset when present, otherwise the full
+session set.
 
 Fork and side-chat creation both reference source turns by stable identifiers.
 Both source forms are fully discriminated — `{ kind: 'fork', chat, turnId }`
@@ -171,6 +220,16 @@ turn later moves into `turns` when it completes. When `selection` is present,
 the host also snapshots that exact selected text (which MUST be non-empty) into
 the created chat's `origin`; `responsePartId` there is advisory provenance, not
 a range.
+
+`origin` is immutable creation provenance. `moveChat` may change a top-level
+chat hierarchy's owning session without rewriting origin; any descendant
+hierarchy used for the move is owned internally by the host and is not exposed
+as chat state. See [Moving chats](/specification/chat-channel#moving-chats).
+
+`SessionState.chats` is a durable, host-authoritative order, not just a set.
+`moveChat` can reposition a movable chat within its current session without
+changing ownership, hierarchy, or any chat URI. `defaultChat` is not pinned to
+any catalog position. See [Moving chats](/specification/chat-channel#moving-chats).
 
 The sections below — turns, response parts, tool calls, pending messages, and input requests — describe the contents of `ChatState`.
 

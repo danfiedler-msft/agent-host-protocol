@@ -11,6 +11,7 @@ import com.microsoft.agenthostprotocol.generated.*
 import java.time.Instant
 import java.time.format.DateTimeFormatterBuilder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 // ─── Reducer Interface ──────────────────────────────────────────────────────
 
@@ -18,10 +19,10 @@ import kotlinx.serialization.json.JsonElement
  * A pure state reducer: `reduce(state, action)` returns the next state, with
  * no mutation of [state] and no side effects.
  *
- * The companion top-level functions ([rootReducer], [sessionReducer], [chatReducer],
+ * The companion top-level functions ([rootReducer], [sessionReducer], [chatReducer], [canvasReducer],
  * [terminalReducer], [changesetReducer], [annotationsReducer], [resourceWatchReducer],
  * [automationReducer], and [automationRunReducer]) are the canonical implementations.
- * The object instances on this interface ([RootReducer], [SessionReducer], [ChatReducer],
+ * The object instances on this interface ([RootReducer], [SessionReducer], [ChatReducer], [CanvasReducer],
  * [TerminalReducer], [ChangesetReducer], [AnnotationsReducer], [ResourceWatchReducer],
  * [AutomationReducer], and [AutomationRunReducer]) wrap them for use as values where an
  * instance is needed.
@@ -46,6 +47,12 @@ public object SessionReducer : Reducer<SessionState, StateAction> {
 public object ChatReducer : Reducer<ChatState, StateAction> {
     override fun reduce(state: ChatState, action: StateAction): ChatState =
         chatReducer(state, action)
+}
+
+/** Pure canvas reducer as a [Reducer] instance. */
+public object CanvasReducer : Reducer<CanvasState, StateAction> {
+    override fun reduce(state: CanvasState, action: StateAction): CanvasState =
+        canvasReducer(state, action)
 }
 
 /** Pure terminal reducer as a [Reducer] instance. Delegates to [terminalReducer]. */
@@ -251,6 +258,13 @@ private fun customizationId(c: Customization): String? = when (c) {
     // Returning `null` mirrors Rust's `Customization::Unknown(_) => None`, so
     // an unknown container can never collide with a real id during lookups.
     is CustomizationUnknown -> null
+}
+
+private fun backgroundWorkId(w: BackgroundWork): String? = when (w) {
+    is BackgroundWorkShell -> w.value.id
+    is BackgroundWorkSubagent -> w.value.id
+    // Kinds from newer hosts still carry the common `id`, so they can be replaced and removed.
+    is BackgroundWorkUnknown -> (w.raw["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
 }
 
 private fun sessionInputRequestId(r: SessionInputRequest): String? = when (r) {
@@ -588,6 +602,7 @@ public fun sessionReducer(state: SessionState, action: StateAction): SessionStat
                 status = c.status ?: prior.status,
                 activity = c.activity ?: prior.activity,
                 modifiedAt = c.modifiedAt ?: prior.modifiedAt,
+                changes = c.changes ?: prior.changes,
                 origin = c.origin ?: prior.origin,
                 workingDirectories = c.workingDirectories ?: prior.workingDirectories,
             )
@@ -598,6 +613,17 @@ public fun sessionReducer(state: SessionState, action: StateAction): SessionStat
     }
 
     is StateActionSessionDefaultChatChanged -> state.copy(defaultChat = action.value.defaultChat)
+
+    is StateActionSessionChatsReordered -> {
+        val a = action.value
+        val summaries = state.chats.associateBy { it.resource }
+        if (a.chats.size != state.chats.size || a.chats.toSet().size != state.chats.size) {
+            state
+        } else {
+            val reordered = a.chats.mapNotNull(summaries::get)
+            if (reordered.size != state.chats.size) state else state.copy(chats = reordered)
+        }
+    }
 
     is StateActionSessionTitleChanged -> state.copy(title = action.value.title)
 
@@ -807,6 +833,19 @@ public fun sessionReducer(state: SessionState, action: StateAction): SessionStat
         )
     }
 
+    is StateActionSessionMcpServerBackgroundRequested -> {
+        val a = action.value
+        val entry = findMcpServerCustomization(state, a.id)
+        val current = entry?.state
+        if (entry == null || current !is McpServerStateStarting || current.value.blocking != true) state
+        else updateMcpServerCustomizationState(
+            state,
+            a.id,
+            McpServerStateStarting(current.value.copy(blocking = false)),
+            entry.channel
+        )
+    }
+
     is StateActionSessionMcpServerStopRequested -> {
         val a = action.value
         updateMcpServerCustomizationState(
@@ -818,6 +857,23 @@ public fun sessionReducer(state: SessionState, action: StateAction): SessionStat
     }
 
     else -> state
+}
+
+/**
+ * Locates the [McpServerCustomization] with [id], searching the top-level list
+ * first and then every container's children, using the same lookup rules as
+ * [updateMcpServerCustomizationState].
+ */
+private fun findMcpServerCustomization(state: SessionState, id: String): McpServerCustomization? {
+    val list = state.customizations ?: return null
+    val top = list.firstOrNull { customizationId(it) == id }
+    if (top != null) return (top as? CustomizationMcpServer)?.value
+    for (container in list) {
+        val children = customizationChildren(container) ?: continue
+        val child = children.firstOrNull { childCustomizationId(it) == id } ?: continue
+        if (child is ChildCustomizationMcpServer) return child.value
+    }
+    return null
 }
 
 private fun updateMcpServerCustomizationState(
@@ -962,6 +1018,42 @@ public fun chatReducer(state: ChatState, action: StateAction): ChatState = when 
 
     is StateActionChatActivityChanged ->
         state.copy(activity = action.value.activity)
+
+    is StateActionChatBackgroundWorkSet -> {
+        val work = action.value.work
+        val id = backgroundWorkId(work)
+        if (id == null) state else {
+            val list = state.backgroundWork ?: emptyList()
+            val idx = list.indexOfFirst { backgroundWorkId(it) == id }
+            val updated = if (idx < 0) {
+                list + work
+            } else {
+                list.toMutableList().also { it[idx] = work }
+            }
+            state.copy(backgroundWork = updated)
+        }
+    }
+
+    is StateActionChatBackgroundWorkRemoved -> {
+        val list = state.backgroundWork
+        val idx = list?.indexOfFirst { backgroundWorkId(it) == action.value.id } ?: -1
+        if (list == null || idx < 0) {
+            state
+        } else {
+            val next = list.toMutableList()
+            next.removeAt(idx)
+            state.copy(backgroundWork = next)
+        }
+    }
+
+    is StateActionChatMovableChanged ->
+        state.copy(movable = action.value.movable)
+
+    is StateActionChatChangesetsChanged ->
+        state.copy(changesets = action.value.changesets)
+
+    is StateActionChatCanvasesChanged ->
+        state.copy(canvases = action.value.canvases)
 
     is StateActionChatWorkingDirectorySet -> {
         val list = state.workingDirectories ?: emptyList()
@@ -1531,6 +1623,14 @@ public fun chatReducer(state: ChatState, action: StateAction): ChatState = when 
 
     is StateActionChatDraftChanged -> state.copy(draft = action.value.draft)
 
+    is StateActionChatIsReadChanged -> state.copy(
+        status = withStatusFlag(state.status, SessionStatus.IS_READ, action.value.isRead),
+    )
+
+    is StateActionChatIsArchivedChanged -> state.copy(
+        status = withStatusFlag(state.status, SessionStatus.IS_ARCHIVED, action.value.isArchived),
+    )
+
     else -> state
 
 }
@@ -1550,6 +1650,12 @@ private data class CompleteCtx(
     val fromAuthRequired: Boolean = false,
 )
 
+
+/** Pure reducer for live canvas state. */
+public fun canvasReducer(state: CanvasState, action: StateAction): CanvasState = when (action) {
+    is StateActionCanvasStateChanged -> action.value.canvas
+    else -> state
+}
 
 // ─── Terminal Reducer ───────────────────────────────────────────────────────
 

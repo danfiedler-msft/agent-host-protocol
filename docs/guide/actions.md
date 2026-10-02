@@ -103,7 +103,9 @@ Tool calls follow a discriminated-union state machine — see [State Model — T
 | `session/activityChanged` | No | Server updated the session's current activity description |
 | `chat/activityChanged` | No | Server updated a chat's current activity description |
 | `session/changesetsChanged` | No | The catalog of changesets the host advertises for this session changed (full replacement) |
+| `chat/changesetsChanged` | No | The catalog of changesets the host advertises for this chat changed (full replacement) |
 | `session/isReadChanged` | **Yes** | Client marked session as read or unread |
+| `chat/isReadChanged` | **Yes** | Client marked any known chat, including the default chat, as read or unread |
 | `session/isArchivedChanged` | **Yes** | Client archived or unarchived session |
 | `session/configChanged` | **Yes** | Mutable session config values changed |
 | `session/metaChanged` | No | The session's `_meta` side-channel was replaced |
@@ -213,6 +215,7 @@ The client applies the action **optimistically** to its local state before sendi
 | `chat/queuedMessagesReordered` | Reorders queued messages; unknown IDs ignored, unmentioned messages kept at end |
 | `session/customizationToggled` | Replaces a customization's explicit enablement decisions by id |
 | `session/isReadChanged` | Marks the session as read or unread |
+| `chat/isReadChanged` | Marks any known chat, including the default chat, as read or unread without changing its owning session or sibling chats; refreshes the compact `SessionChatSummary.status` projection |
 | `session/isArchivedChanged` | Archives or unarchives the session |
 
 ## Reducers

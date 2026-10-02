@@ -359,6 +359,19 @@ const (
 	TerminalLifecycleStatusExited  TerminalLifecycleStatus = "exited"
 )
 
+// Kind of {@link BackgroundWork}.
+//
+// This is a general/typological union (not a lifecycle), so the discriminant is
+// a `*Kind`.
+type BackgroundWorkKind string
+
+const (
+	// A shell command that continues after its initiating tool call returns.
+	BackgroundWorkKindShell BackgroundWorkKind = "shell"
+	// A subagent running in the background.
+	BackgroundWorkKindSubagent BackgroundWorkKind = "subagent"
+)
+
 // Discriminant for the {@link McpServerState} union.
 type McpServerStatus string
 
@@ -412,8 +425,12 @@ const (
 type ChangesetStatus string
 
 const (
-	// The server is still computing the contents of this changeset.
+	// The server is computing this changeset for the first time.
 	ChangesetStatusComputing ChangesetStatus = "computing"
+	// The server is recomputing this changeset. {@link ChangesetState.files}
+	// remains the previous completed result while recomputation is in progress,
+	// including when that result is an empty array.
+	ChangesetStatusRecomputing ChangesetStatus = "recomputing"
 	// The changeset has been fully computed and is up-to-date.
 	ChangesetStatusReady ChangesetStatus = "ready"
 	// Computation failed. The cause is described by
@@ -508,6 +525,16 @@ const (
 	AutomationTriggerKindSchedule AutomationTriggerKind = "schedule"
 	// A host-defined external event discovered from trigger definitions.
 	AutomationTriggerKindEvent AutomationTriggerKind = "event"
+)
+
+// Discriminant for an {@link AutomationDisableCondition}.
+type AutomationDisableConditionKind string
+
+const (
+	// Stop scheduling after a fixed number of scheduled runs.
+	AutomationDisableConditionKindAfterRuns AutomationDisableConditionKind = "afterRuns"
+	// Stop scheduling once a wall-clock date passes.
+	AutomationDisableConditionKindAfterDate AutomationDisableConditionKind = "afterDate"
 )
 
 // Lifecycle status of one automation run.
@@ -680,7 +707,8 @@ type AgentCapabilities struct {
 	// clients MUST NOT call `createChat` to open chats beyond the default one the
 	// session starts with. An empty object `{}` advertises multi-chat without
 	// source-based creation; set {@link MultipleChatsCapability.fork} or
-	// {@link MultipleChatsCapability.sideChat} to allow the corresponding mode.
+	// {@link MultipleChatsCapability.sideChat} to allow the corresponding
+	// creation mode.
 	MultipleChats *MultipleChatsCapability `json:"multipleChats,omitempty"`
 	// The session's agent can be granted tool access to more than one working
 	// directory. The directories are treated as equal peers except where the
@@ -825,6 +853,10 @@ type ConfigPropertySchema struct {
 	ReadOnly *bool `json:"readOnly,omitempty"`
 	// JSON Schema: schema for array items (used when `type` is `'array'`)
 	Items *ConfigPropertySchema `json:"items,omitempty"`
+	// JSON Schema: minimum number of array items (used when `type` is `'array'`)
+	MinItems *int64 `json:"minItems,omitempty"`
+	// JSON Schema: maximum number of array items (used when `type` is `'array'`)
+	MaxItems *int64 `json:"maxItems,omitempty"`
 	// JSON Schema: property descriptors for object properties (used when `type` is `'object'`)
 	Properties map[string]ConfigPropertySchema `json:"properties,omitempty"`
 	// JSON Schema: list of required property ids (used when `type` is `'object'`)
@@ -899,11 +931,13 @@ type SessionState struct {
 	// reconnecting in time, or reconnect without resubscribing to the session.
 	ActiveClients []SessionActiveClient `json:"activeClients"`
 	// Catalog of chats in this session.
+	//
+	// Order is host-authoritative and durable. Catalog order is independent of
+	// `defaultChat`.
 	Chats []ChatSummary `json:"chats"`
 	// The chat that receives input when the user addresses the session without
-	// selecting a specific chat. This is a UI routing hint, not a hierarchy
-	// marker — chats remain equal peers at the protocol level. Hosts MAY change
-	// this over the session's lifetime.
+	// selecting a specific chat. This routing designation does not determine the
+	// chat's catalog position. Hosts MAY change it over the session's lifetime.
 	DefaultChat *URI `json:"defaultChat,omitempty"`
 	// Session configuration schema and current values
 	Config *SessionConfigState `json:"config,omitempty"`
@@ -1123,7 +1157,8 @@ type SessionToolAuthenticationRequest struct {
 //     to a subset via {@link ChatSummary.workingDirectories}; aggregating these
 //     up is meaningless and SHOULD NOT be attempted.
 //   - `changes`: optional roll-up across all chats. Producers MAY sum the
-//     per-chat changeset stats or report the most expensive chat's stats —
+//     per-chat {@link ChatSummary.changes | changes summaries} or report the
+//     most expensive chat's stats —
 //     whichever is cheaper for the host to compute.
 //
 // Sessions with a single chat trivially satisfy all of the above (the chat's
@@ -1174,9 +1209,45 @@ type SessionSummary struct {
 	// SHOULD keep the payload small because summaries appear in session lists
 	// and session notifications.
 	Meta map[string]json.RawMessage `json:"_meta,omitempty"`
+	// Lightweight host-authoritative ordered chat catalog.
+	Chats []SessionChatSummary `json:"chats,omitempty"`
+	// Chat that receives input when none is selected, independent of catalog position.
+	DefaultChat *URI `json:"defaultChat,omitempty"`
 }
 
-// Aggregate counts describing the file changes associated with a session.
+// Lightweight chat information in a session catalog.
+type SessionChatSummary struct {
+	// Canonical chat URI
+	Resource URI `json:"resource"`
+	// Human-readable chat title
+	Title string `json:"title"`
+	// How this chat was created, when known
+	Origin *ChatOrigin `json:"origin,omitempty"`
+	// How the user can interact with this chat.
+	//
+	// Generic clients use this to omit hidden chats and disable input for
+	// read-only chats. Absence defaults to {@link ChatInteractivity.Full} for
+	// backward compatibility.
+	Interactivity *ChatInteractivity `json:"interactivity,omitempty"`
+	// Current chat status, matching {@link ChatSummary.status}.
+	//
+	// Includes the activity bits and the orthogonal {@link SessionStatus.IsRead}
+	// and {@link SessionStatus.IsArchived} flags. Generic clients use these bits
+	// to present read, unread, or archived chats in session lists without
+	// subscribing to the session or chat channel. Absence means the host did
+	// not provide the status; clients MUST treat it as unknown, not as unread
+	// or unarchived.
+	Status *SessionStatus `json:"status,omitempty"`
+	// Aggregate summary of file changes associated with this chat.
+	//
+	// Servers may populate this so session lists can show per-chat change
+	// counts without subscribing to the session or chat channel. Updates travel
+	// with the rest of the catalog in `root/sessionSummaryChanged`.
+	Changes *ChangesSummary `json:"changes,omitempty"`
+}
+
+// Aggregate counts describing the file changes associated with a session or
+// chat.
 //
 // All fields are optional so servers can populate only the metrics they
 // cheaply have available.
@@ -1211,8 +1282,19 @@ type ChatState struct {
 	Activity *string `json:"activity,omitempty"`
 	// Last modification timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
 	ModifiedAt string `json:"modifiedAt"`
+	// Aggregate summary of file changes associated with this chat. Servers may
+	// populate this to give clients a quick at-a-glance view of the chat's
+	// footprint without requiring the client to subscribe to a changeset.
+	Changes *ChangesSummary `json:"changes,omitempty"`
 	// How this chat came into existence
 	Origin *ChatOrigin `json:"origin,omitempty"`
+	// Whether this chat is eligible to be the source of `moveChat`, including
+	// same-session ordering.
+	//
+	// The host is authoritative. Absence means `false`. A `true` value does not
+	// guarantee that a particular request will succeed. A chat referenced by its
+	// owning session's `defaultChat` MUST NOT be movable.
+	Movable *bool `json:"movable,omitempty"`
 	// How the user can interact with this chat. See {@link ChatInteractivity}.
 	//
 	// Supports agent-team patterns where worker chats are read-only or hidden.
@@ -1231,6 +1313,30 @@ type ChatState struct {
 	// Dispatch `chat/workingDirectorySet` / `chat/workingDirectoryRemoved` to
 	// update the subset on a running chat.
 	WorkingDirectories []URI `json:"workingDirectories,omitempty"`
+	// Catalogue of changesets the server can produce for this chat. Each entry
+	// advertises a subscribable view of file changes scoped to the chat's
+	// effective working directories and the URI template the client expands
+	// before subscribing. See {@link Changeset} for the full shape and
+	// {@link /guide/changesets | Changesets} for an overview of the model.
+	//
+	// This catalogue is intentionally absent from {@link ChatSummary}; clients
+	// obtain it by subscribing to the chat channel.
+	Changesets []Changeset `json:"changesets,omitempty"`
+	// Work running in the background for this chat, such as shells and
+	// subagents. Only active work is listed: hosts remove an entry once the work
+	// ends. An entry may have been started by an earlier turn rather than the
+	// {@link ChatState.activeTurn | activeTurn}.
+	//
+	// Like {@link ChatState.changesets | changesets}, this is intentionally
+	// absent from {@link ChatSummary}; clients obtain it by subscribing to the
+	// chat channel.
+	BackgroundWork *[]BackgroundWork `json:"backgroundWork,omitempty"`
+	// Live canvases currently exposed by this chat.
+	//
+	// Entries intentionally contain only subscribable channel references.
+	// Clients subscribe to each resource for the experimental presentation
+	// state, including its current live source URL.
+	Canvases []CanvasReference `json:"canvases,omitempty"`
 	// Completed turns
 	Turns []Turn `json:"turns"`
 	// Cursor for loading older completed turns into this chat state.
@@ -1262,6 +1368,42 @@ type ChatState struct {
 	Meta map[string]json.RawMessage `json:"_meta,omitempty"`
 }
 
+// Stable reference to a subscribable canvas channel.
+//
+// Chat state intentionally carries only this reference so the experimental
+// canvas presentation model can evolve without changing the stable chat
+// channel shape.
+type CanvasReference struct {
+	// Canvas channel URI. Subscribe to this resource for the full state.
+	Resource URI `json:"resource"`
+}
+
+// Full state for one live canvas, returned when a client subscribes to its
+// `ahp-canvas:` URI.
+//
+// The client already knows the subscribed resource, so the state does not
+// redundantly carry its channel URI.
+type CanvasState struct {
+	// Stable caller-supplied instance identifier.
+	InstanceId string `json:"instanceId"`
+	// Owning extension/provider identifier.
+	ExtensionId string `json:"extensionId"`
+	// Owning extension display name, when available.
+	ExtensionName *string `json:"extensionName,omitempty"`
+	// Provider-local canvas type identifier.
+	CanvasId string `json:"canvasId"`
+	// Provider-supplied title, when available.
+	Title *string `json:"title,omitempty"`
+	// Provider-supplied status text, when available.
+	Status *string `json:"status,omitempty"`
+	// Current absolute HTTP(S) source URL; absent when the live source is unavailable.
+	// Hosts MUST clear this field when the provider becomes unavailable.
+	//
+	// Source URLs MUST be redacted from diagnostic logs and MUST NOT be reused
+	// from persisted state after a provider or host restart.
+	Url *URI `json:"url,omitempty"`
+}
+
 // Lightweight catalog entry for a chat, carried in
 // {@link SessionState.chats | `SessionState.chats`}. The full conversation
 // lives in {@link ChatState}, which inlines (denormalizes) every field below.
@@ -1276,8 +1418,17 @@ type ChatSummary struct {
 	Activity *string `json:"activity,omitempty"`
 	// Last modification timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
 	ModifiedAt string `json:"modifiedAt"`
+	// Aggregate summary of file changes associated with this chat. Servers may
+	// populate this to give clients a quick at-a-glance view of the chat's
+	// footprint without requiring the client to subscribe to a changeset.
+	Changes *ChangesSummary `json:"changes,omitempty"`
 	// How this chat came into existence
 	Origin *ChatOrigin `json:"origin,omitempty"`
+	// Whether this chat is structurally eligible to be the source of
+	// `moveChat`. Absence means `false`.
+	//
+	// See {@link ChatState.movable} for the full semantics.
+	Movable *bool `json:"movable,omitempty"`
 	// How the user can interact with this chat. See {@link ChatInteractivity}.
 	//
 	// Supports agent-team patterns where worker chats are read-only or hidden.
@@ -1287,6 +1438,53 @@ type ChatSummary struct {
 	// The subset of the session's working directories this chat uses.
 	// See {@link ChatState.workingDirectories} for the full semantics.
 	WorkingDirectories []URI `json:"workingDirectories,omitempty"`
+}
+
+// A shell command continuing outside its initiating tool call. Covers shells
+// tied to the agent's lifetime (attached) and shells that outlive it
+// (detached). Whether a shell is attached is provider-specific and goes in its
+// `_meta`.
+type BackgroundShellWork struct {
+	// Identifier of this entry, unique within the owning chat across all kinds.
+	// The host derives it however it likes (for example from the kind plus the
+	// agent's own task id); consumers MUST treat it as opaque. It is the key for
+	// the `chat/backgroundWorkSet` / `chat/backgroundWorkRemoved` upsert
+	// convention.
+	Id string `json:"id"`
+	// Human-readable label, such as the command's purpose or the subagent's name.
+	Label string `json:"label"`
+	// ISO 8601 timestamp when the work started.
+	StartedAt string `json:"startedAt"`
+	// Provider-specific metadata.
+	Meta map[string]json.RawMessage `json:"_meta,omitempty"`
+	Kind BackgroundWorkKind         `json:"kind"`
+	// Command line, displayed as plain text.
+	Command string `json:"command"`
+	// Terminal carrying this shell's output. Hosts SHOULD set this whenever they
+	// can show that output. Clients open it like
+	// {@link ToolResultTerminalContent.resource}; `isPty` on its
+	// {@link TerminalState} says whether the output is plain text.
+	Terminal *URI `json:"terminal,omitempty"`
+}
+
+// A subagent running in the background. Its own state lives in its chat.
+type BackgroundSubagentWork struct {
+	// Identifier of this entry, unique within the owning chat across all kinds.
+	// The host derives it however it likes (for example from the kind plus the
+	// agent's own task id); consumers MUST treat it as opaque. It is the key for
+	// the `chat/backgroundWorkSet` / `chat/backgroundWorkRemoved` upsert
+	// convention.
+	Id string `json:"id"`
+	// Human-readable label, such as the command's purpose or the subagent's name.
+	Label string `json:"label"`
+	// ISO 8601 timestamp when the work started.
+	StartedAt string `json:"startedAt"`
+	// Provider-specific metadata.
+	Meta map[string]json.RawMessage `json:"_meta,omitempty"`
+	Kind BackgroundWorkKind         `json:"kind"`
+	// The subagent's chat: the same chat the spawning tool call's
+	// {@link ToolResultSubagentContent.resource} points to.
+	Chat URI `json:"chat"`
 }
 
 // Immutable selected-text snapshot captured when a side chat is created.
@@ -1349,6 +1547,10 @@ type SessionConfigPropertySchema struct {
 	ReadOnly *bool `json:"readOnly,omitempty"`
 	// JSON Schema: schema for array items (used when `type` is `'array'`)
 	Items *ConfigPropertySchema `json:"items,omitempty"`
+	// JSON Schema: minimum number of array items (used when `type` is `'array'`)
+	MinItems *int64 `json:"minItems,omitempty"`
+	// JSON Schema: maximum number of array items (used when `type` is `'array'`)
+	MaxItems *int64 `json:"maxItems,omitempty"`
 	// JSON Schema: property descriptors for object properties (used when `type` is `'object'`)
 	Properties map[string]ConfigPropertySchema `json:"properties,omitempty"`
 	// JSON Schema: list of required property ids (used when `type` is `'object'`)
@@ -2104,7 +2306,7 @@ type ToolCallPendingConfirmationState struct {
 	// Risk assessment that informed the confirmation requirement.
 	RiskAssessment *ToolCallRiskAssessment `json:"riskAssessment,omitempty"`
 	// File edits that this tool call will perform, for preview before confirmation
-	Edits *json.RawMessage `json:"edits,omitempty"`
+	Edits *FileEditCollection `json:"edits,omitempty"`
 	// Whether the agent host allows the client to edit the tool's input parameters before confirming
 	Editable *bool `json:"editable,omitempty"`
 	// Options the server offers for this confirmation. When present, the client
@@ -2431,18 +2633,22 @@ type ToolResultResourceContent struct {
 // Describes a file modification performed by a tool.
 type ToolResultFileEditContent struct {
 	// The file state before the edit. Absent for file creations or for in-place file edits.
-	Before *json.RawMessage `json:"before,omitempty"`
+	Before *FileEditSide `json:"before,omitempty"`
 	// The file state after the edit. Absent for file deletions.
-	After *json.RawMessage `json:"after,omitempty"`
+	After *FileEditSide `json:"after,omitempty"`
 	// Optional diff display metadata
-	Diff *json.RawMessage      `json:"diff,omitempty"`
+	Diff *FileEditDiffStats    `json:"diff,omitempty"`
 	Type ToolResultContentType `json:"type"`
 }
 
 // A reference to a terminal whose output is relevant to this tool result.
 //
 // Clients can subscribe to the terminal's URI to stream its output in real
-// time, providing live feedback while a tool is executing.
+// time, providing live feedback while a tool is executing. The same URI
+// remains subscribable for historical results: when the referenced resource's
+// lifecycle is `exited`, subscribing returns an exited {@link TerminalState}
+// containing the retained terminal content. Servers may reconstruct that state
+// lazily and do not need to retain a live terminal process.
 //
 // When the command exits, {@link result} is filled in on the completed
 // result, retaining the outcome for clients that did not subscribe. This
@@ -2450,7 +2656,7 @@ type ToolResultFileEditContent struct {
 // running afterwards.
 type ToolResultTerminalContent struct {
 	Type ToolResultContentType `json:"type"`
-	// Terminal URI (subscribable for full terminal state)
+	// Terminal URI (subscribable for live or retained terminal state)
 	Resource URI `json:"resource"`
 	// Display title for the terminal content
 	Title string `json:"title"`
@@ -3109,6 +3315,15 @@ type AhpMcpUiHostCapabilities struct {
 // Server is registered with the host but has not yet started.
 type McpServerStartingState struct {
 	Kind McpServerStatus `json:"kind"`
+	// Hosts SHOULD set this to `true` when this server's startup will hold back
+	// the processing of new messages (for example, the next turn) while the
+	// server's contributions — such as its tools — are discovered.
+	//
+	// Clients MAY dispatch
+	// {@link SessionMcpServerBackgroundRequestedAction | `session/mcpServerBackgroundRequested`}
+	// through an appropriate affordance to ask the host to background the
+	// startup.
+	Blocking *bool `json:"blocking,omitempty"`
 }
 
 // Server is running and serving requests.
@@ -3238,17 +3453,35 @@ type ToolCallMcpContributor struct {
 	CustomizationId string `json:"customizationId"`
 }
 
+type FileEditSide struct {
+	// URI of the file on this side of the edit
+	Uri URI `json:"uri"`
+	// Reference to the file content on this side of the edit
+	Content ContentRef `json:"content"`
+}
+
+type FileEditDiffStats struct {
+	// Number of items added (e.g., lines for text files, cells for notebooks)
+	Added *int64 `json:"added,omitempty"`
+	// Number of items removed (e.g., lines for text files, cells for notebooks)
+	Removed *int64 `json:"removed,omitempty"`
+}
+
 // Describes a file modification with before/after state and diff metadata.
 //
 // Supports creates (only `after`), deletes (only `before`), renames/moves
 // (different `uri` in `before` and `after`), and edits (same `uri`, different content).
 type FileEdit struct {
 	// The file state before the edit. Absent for file creations or for in-place file edits.
-	Before *json.RawMessage `json:"before,omitempty"`
+	Before *FileEditSide `json:"before,omitempty"`
 	// The file state after the edit. Absent for file deletions.
-	After *json.RawMessage `json:"after,omitempty"`
+	After *FileEditSide `json:"after,omitempty"`
 	// Optional diff display metadata
-	Diff *json.RawMessage `json:"diff,omitempty"`
+	Diff *FileEditDiffStats `json:"diff,omitempty"`
+}
+
+type FileEditCollection struct {
+	Items []FileEdit `json:"items"`
 }
 
 // Outcome of a command run in a terminal-style tool, filled in on
@@ -3408,7 +3641,7 @@ type ErrorInfo struct {
 // A point-in-time snapshot of a subscribed resource's state, returned by
 // `initialize`, `reconnect`, and `subscribe`.
 type Snapshot struct {
-	// The subscribed channel URI (e.g. `ahp-root://`, `ahp-session:/<uuid>`, or `ahp-chat:/<uuid>`)
+	// The subscribed channel URI (e.g. `ahp-root://`, `ahp-session:/<uuid>`, `ahp-chat:/<uuid>`, or `ahp-canvas:/<uuid>`)
 	Resource URI `json:"resource"`
 	// The current state of the resource
 	State SnapshotState `json:"state"`
@@ -3417,7 +3650,7 @@ type Snapshot struct {
 }
 
 // Catalogue entry describing one changeset the server can produce for a
-// session.
+// session or chat.
 //
 // Catalogue entries are intentionally lightweight — just enough to render a
 // chip or list row without subscribing. Full per-changeset detail
@@ -3436,8 +3669,8 @@ type Changeset struct {
 	//
 	// | Variables in template                       | Meaning                                                                              |
 	// | ------------------------------------------- | ------------------------------------------------------------------------------------ |
-	// | _(none)_                                    | A static, session-wide changeset. The template is itself a subscribable URI.         |
-	// | `{turnId}`                                  | Per-turn slice. Expand with a `Turn.id` from the session.                            |
+	// | _(none)_                                    | A static changeset scoped to the advertising session or chat. The template is itself a subscribable URI. |
+	// | `{turnId}`                                  | Per-turn slice. Expand with a `Turn.id` from the advertising chat or session.        |
 	// | `{originalTurnId}` and `{modifiedTurnId}`   | Diff between two turns. Both variables MUST be present.                              |
 	//
 	// Future protocol versions MAY add new well-known variables.
@@ -3465,11 +3698,11 @@ type Changeset struct {
 	// Optional capability declarations for this changeset. Absent (or an empty
 	// object) means the changeset advertises no optional capabilities.
 	//
-	// Because the catalogue entry is delivered up-front on
-	// {@link ChangesetState | the session's changeset list}, clients can decide
-	// whether to surface capability-gated UI (such as review checkboxes) without
-	// first subscribing to the changeset URI. Mirrors the presence-flag
-	// convention of `ClientCapabilities`.
+	// Because the catalogue entry is delivered up-front on the advertising
+	// session or chat's changeset list, clients can decide whether to surface
+	// capability-gated UI (such as review checkboxes) without first subscribing
+	// to the changeset URI. Mirrors the presence-flag convention of
+	// `ClientCapabilities`.
 	Capabilities *ChangesetCapabilities `json:"capabilities,omitempty"`
 }
 
@@ -3879,6 +4112,30 @@ type AutomationSessionTemplate struct {
 	// {@link CreateSessionParams.config}, normally obtained from
 	// {@link ResolveSessionConfigResult.values}.
 	Config map[string]json.RawMessage `json:"config,omitempty"`
+	// Client plugins to make available in every run session, in the same
+	// published shape as
+	// {@link SessionActiveClient.customizations | `activeClients[].customizations`}.
+	// Entries are keyed by `id`.
+	//
+	// Runs usually start when no client is connected, so the host does not
+	// resolve these URIs at run time. Instead, when it accepts a
+	// {@link AutomationCreateRequestedAction | `automation/createRequested`} or
+	// {@link AutomationUpdateRequestedAction | `automation/updateRequested`}
+	// that adds an entry or changes an entry's `uri` or `nonce`, the host
+	// captures a host-owned copy of the plugin. For client-served URIs such as
+	// `virtual://…`, it reads the contents from the dispatching client with
+	// server→client `resource*` requests. If a capture fails, the host rejects
+	// the whole action. Entries whose `id`, `uri`, and `nonce` are unchanged keep
+	// their existing copy, so any client can re-submit a template it received
+	// without being able to serve the plugin itself. The resulting copies are
+	// reported in {@link AutomationEntry.customizations}.
+	//
+	// The host MAY share one stored copy between entries with equal `uri` and
+	// `nonce`, including across automations; this is not observable to clients.
+	//
+	// Clients MUST NOT set this field unless the host advertises
+	// {@link AutomationCapabilities.customizations}.
+	Customizations []ClientPluginCustomization `json:"customizations,omitempty"`
 }
 
 // Durable, client-editable definition of an automation.
@@ -3900,6 +4157,20 @@ type AutomationDefinition struct {
 	Enabled bool `json:"enabled"`
 	// Automatic triggers. An empty list means manual-only.
 	Triggers []AutomationTrigger `json:"triggers"`
+	// Self-disable rules combined with logical OR: the host sets
+	// {@link AutomationDefinition.enabled} to `false` when any condition is met.
+	// Absent or empty means no automatic disable conditions. Each
+	// {@link AutomationDisableConditionKind} may appear at most once; hosts MUST
+	// reject create or update requests containing duplicate kinds.
+	//
+	// Only automatic (scheduled) runs are governed; manual runs via
+	// {@link RunAutomationParams | runAutomation} are never blocked. For a
+	// {@link AutomationAfterRunsCondition}, usage is tracked by the host-owned
+	// {@link AutomationEntry.runCount}. Adding that kind when absent or
+	// a disabled→enabled transition starts a fresh allowance. Clearing the
+	// conditions does not re-enable a disabled automation. See the
+	// {@link /guide/automations | Automations Guide}.
+	DisableConditions *[]AutomationDisableCondition `json:"disableConditions,omitempty"`
 	// Opaque implementation-defined metadata. Clients MUST preserve unknown
 	// entries when updating the definition.
 	Meta map[string]json.RawMessage `json:"_meta,omitempty"`
@@ -3915,15 +4186,36 @@ type AutomationDefinitionPatch struct {
 	// Replacement {@link AutomationDefinition.message}.
 	Message *Message `json:"message,omitempty"`
 	// Replacement {@link AutomationDefinition.session}. The host revalidates
-	// affected event triggers when their discovery context changes.
+	// affected event triggers when their discovery context changes, and
+	// captures {@link AutomationSessionTemplate.customizations} entries that
+	// are new or whose `uri` or `nonce` changed.
 	Session *AutomationSessionTemplate `json:"session,omitempty"`
 	// Replacement {@link AutomationDefinition.enabled}.
 	Enabled *bool `json:"enabled,omitempty"`
 	// Complete replacement {@link AutomationDefinition.triggers}. The host
 	// validates event ids and normalizes event-trigger titles and descriptions.
 	Triggers *[]AutomationTrigger `json:"triggers,omitempty"`
+	// Complete replacement {@link AutomationDefinition.disableConditions}.
+	// Omit to leave unchanged; supply an empty array to remove all conditions.
+	// Each kind may appear at most once; hosts MUST reject duplicate kinds.
+	// Clearing conditions does not change {@link AutomationDefinition.enabled}.
+	DisableConditions *[]AutomationDisableCondition `json:"disableConditions,omitempty"`
 	// Complete replacement {@link AutomationDefinition._meta}.
 	Meta *map[string]json.RawMessage `json:"_meta,omitempty"`
+}
+
+// Stops scheduling after a fixed number of scheduled runs.
+type AutomationAfterRunsCondition struct {
+	Kind AutomationDisableConditionKind `json:"kind"`
+	// Positive-integer cap on scheduled runs.
+	Max int64 `json:"max"`
+}
+
+// Stops scheduling once a wall-clock date passes.
+type AutomationAfterDateCondition struct {
+	Kind AutomationDisableConditionKind `json:"kind"`
+	// ISO 8601 timestamp after which scheduling stops.
+	Date string `json:"date"`
 }
 
 // Authoritative state of one automation in {@link AutomationState.entries}.
@@ -3938,6 +4230,18 @@ type AutomationEntry struct {
 	Definition AutomationDefinition `json:"definition"`
 	// Earliest schedule occurrence awaiting evaluation, as an ISO 8601 timestamp. It may be in the past while catch-up is pending.
 	NextRunAt *string `json:"nextRunAt,omitempty"`
+	// Host-owned count of scheduled runs consumed against the current
+	// {@link AutomationAfterRunsCondition} allowance. Authoritative usage for the
+	// **current** allowance, not a lifetime total: the host resets it to `0` when
+	// a disabled→enabled transition starts a fresh allowance or a
+	// {@link AutomationAfterRunsCondition} is added when none was present. It is NOT
+	// reconstructed from {@link runs} (a bounded, prunable window). The host
+	// increments it atomically when it admits a scheduled run, including runs
+	// later cancelled or failed.
+	//
+	// Absent when {@link AutomationDefinition.disableConditions} contains no
+	// {@link AutomationAfterRunsCondition}.
+	RunCount *int64 `json:"runCount,omitempty"`
 	// Newest-first retained run summaries. This is a bounded window; use
 	// {@link FetchAutomationRunsParams | fetchAutomationRuns} when
 	// {@link AutomationEntry.runsNextCursor} is present.
@@ -3946,6 +4250,20 @@ type AutomationEntry struct {
 	RunsNextCursor *string `json:"runsNextCursor,omitempty"`
 	// Operations currently permitted for this automation.
 	Operations []AutomationOperation `json:"operations"`
+	// Host-owned copies of the plugins in
+	// {@link AutomationSessionTemplate.customizations}, one per template entry
+	// with the same `id`. Absent when the template has no customizations.
+	//
+	// Each copy's `uri` identifies the captured contents, which clients can
+	// browse with `resourceRead`. `children` and `load` report what the host
+	// found in that copy, independent of whether the originating client is
+	// connected. `clientId` is absent because the copy no longer depends on a
+	// client.
+	//
+	// Every run session receives these plugins in
+	// {@link SessionState.customizations}, with the enablement from the
+	// matching template entry.
+	Customizations []PluginCustomization `json:"customizations,omitempty"`
 	// Creation timestamp in ISO 8601 format.
 	CreatedAt string `json:"createdAt"`
 	// Last definition modification timestamp in ISO 8601 format.
@@ -5489,6 +5807,66 @@ func (u SessionInputRequest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(u.Value)
 }
 
+// BackgroundWork is work that keeps running after the tool call that started it returns and will resume the owning chat when it finishes.
+type BackgroundWork struct {
+	Value isBackgroundWork
+}
+
+// isBackgroundWork is the marker interface implemented by every
+// concrete variant of BackgroundWork.
+type isBackgroundWork interface{ isBackgroundWork() }
+
+func (*BackgroundShellWork) isBackgroundWork()    {}
+func (*BackgroundSubagentWork) isBackgroundWork() {}
+
+// BackgroundWorkUnknown carries an unrecognized BackgroundWork variant — typically a discriminator value introduced by a newer protocol version. The original JSON object is preserved verbatim so that re-encoding round-trips faithfully.
+type BackgroundWorkUnknown struct {
+	Raw json.RawMessage
+}
+
+func (*BackgroundWorkUnknown) isBackgroundWork() {}
+
+// UnmarshalJSON decodes the variant indicated by the "kind" discriminator.
+func (u *BackgroundWork) UnmarshalJSON(data []byte) error {
+	disc, _, err := readDiscriminator(data, "kind")
+	if err != nil {
+		return err
+	}
+	switch disc {
+	case "shell":
+		var value BackgroundShellWork
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "subagent":
+		var value BackgroundSubagentWork
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	default:
+		raw := make(json.RawMessage, len(data))
+		copy(raw, data)
+		u.Value = &BackgroundWorkUnknown{Raw: raw}
+	}
+	return nil
+}
+
+// MarshalJSON encodes the active variant back to JSON.
+func (u BackgroundWork) MarshalJSON() ([]byte, error) {
+	if unk, ok := u.Value.(*BackgroundWorkUnknown); ok {
+		if len(unk.Raw) == 0 {
+			return []byte("null"), nil
+		}
+		return unk.Raw, nil
+	}
+	if u.Value == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(u.Value)
+}
+
 // SessionOrigin is the durable origin of a session.
 type SessionOrigin struct {
 	Value isSessionOrigin
@@ -5612,6 +5990,68 @@ func (u AutomationTrigger) MarshalJSON() ([]byte, error) {
 		object["kind"] = json.RawMessage("\"schedule\"")
 	case *AutomationEventTrigger:
 		object["kind"] = json.RawMessage("\"event\"")
+	}
+	return json.Marshal(object)
+}
+
+// AutomationDisableCondition is an automation's self-disable rule.
+type AutomationDisableCondition struct {
+	Value isAutomationDisableCondition
+}
+
+// isAutomationDisableCondition is the marker interface implemented by every
+// concrete variant of AutomationDisableCondition.
+type isAutomationDisableCondition interface{ isAutomationDisableCondition() }
+
+func (*AutomationAfterRunsCondition) isAutomationDisableCondition() {}
+func (*AutomationAfterDateCondition) isAutomationDisableCondition() {}
+
+// UnmarshalJSON decodes the variant indicated by the "kind" discriminator.
+func (u *AutomationDisableCondition) UnmarshalJSON(data []byte) error {
+	disc, ok, err := readDiscriminator(data, "kind")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return missingDiscriminatorError("AutomationDisableCondition", "kind")
+	}
+	switch disc {
+	case "afterRuns":
+		var value AutomationAfterRunsCondition
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "afterDate":
+		var value AutomationAfterDateCondition
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	default:
+		return unknownDiscriminatorError("AutomationDisableCondition", "kind", disc)
+	}
+	return nil
+}
+
+// MarshalJSON encodes the active variant back to JSON.
+func (u AutomationDisableCondition) MarshalJSON() ([]byte, error) {
+	if u.Value == nil {
+		return []byte("null"), nil
+	}
+	data, err := json.Marshal(u.Value)
+	if err != nil {
+		return nil, err
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	switch u.Value.(type) {
+	case *AutomationAfterRunsCondition:
+		object["kind"] = json.RawMessage("\"afterRuns\"")
+	case *AutomationAfterDateCondition:
+		object["kind"] = json.RawMessage("\"afterDate\"")
 	}
 	return json.Marshal(object)
 }
@@ -5864,16 +6304,17 @@ func (o ChatOrigin) MarshalJSON() ([]byte, error) {
 }
 
 // SnapshotState is the state payload of a snapshot — root, session,
-// chat, terminal, changeset, resource-watch, annotations, automation catalogue,
+// chat, canvas, terminal, changeset, resource-watch, annotations, automation catalogue,
 // or automation-run state. The active
 // variant is chosen by which pointer field is non-nil; UnmarshalJSON probes
 // for required fields in the canonical order
-// (automationRun → automations → session → chat → terminal → changeset →
+// (automationRun → automations → session → chat → canvas → terminal → changeset →
 // resourceWatch → annotations → root).
 type SnapshotState struct {
 	Root          *RootState          `json:"-"`
 	Session       *SessionState       `json:"-"`
 	Chat          *ChatState          `json:"-"`
+	Canvas        *CanvasState        `json:"-"`
 	Terminal      *TerminalState      `json:"-"`
 	Changeset     *ChangesetState     `json:"-"`
 	ResourceWatch *ResourceWatchState `json:"-"`
@@ -5893,6 +6334,8 @@ func (s SnapshotState) MarshalJSON() ([]byte, error) {
 		return json.Marshal(s.Session)
 	case s.Chat != nil:
 		return json.Marshal(s.Chat)
+	case s.Canvas != nil:
+		return json.Marshal(s.Canvas)
 	case s.Terminal != nil:
 		return json.Marshal(s.Terminal)
 	case s.Changeset != nil:
@@ -5941,6 +6384,12 @@ func (s *SnapshotState) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		s.Chat = &v
+	case containsAll(probe, "instanceId", "extensionId", "canvasId"):
+		var v CanvasState
+		if err := json.Unmarshal(data, &v); err != nil {
+			return err
+		}
+		s.Canvas = &v
 	case containsAll(probe, "content"):
 		var v TerminalState
 		if err := json.Unmarshal(data, &v); err != nil {

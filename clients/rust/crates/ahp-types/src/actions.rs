@@ -15,14 +15,15 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 use crate::state::{
     AgentInfo, AgentSelection, Annotation, AnnotationEntry, AnnotationOrigin, AutomationDefinition,
     AutomationDefinitionPatch, AutomationEntry, AutomationRunLifecycle, AutomationRunSummary,
-    Changeset, ChangesetFile, ChangesetOperation, ChangesetOperationStatus, ChangesetStatus,
-    ChatInputAnswer, ChatInputRequest, ChatInputResponseKind, ChatInteractivity, ChatOrigin,
-    ChatSummary, ConfirmationOption, ContentRef, Customization, CustomizationEnablement, ErrorInfo,
-    ErrorResponsePart, McpAuthRequirement, McpServerState, Message, ModelSelection,
-    PendingMessageKind, ResponsePart, SessionActiveClient, SessionInputRequest, SideChatSelection,
-    TerminalClaim, TerminalInfo, TextRange, ToolCallCancellationReason, ToolCallConfirmationReason,
-    ToolCallContributor, ToolCallResult, ToolCallRiskAssessment, ToolDefinition, ToolInput,
-    ToolResultContent, Turn, UsageInfo,
+    BackgroundWork, CanvasReference, CanvasState, ChangesSummary, Changeset, ChangesetFile,
+    ChangesetOperation, ChangesetOperationStatus, ChangesetStatus, ChatInputAnswer,
+    ChatInputRequest, ChatInputResponseKind, ChatInteractivity, ChatOrigin, ChatSummary,
+    ConfirmationOption, ContentRef, Customization, CustomizationEnablement, ErrorInfo,
+    ErrorResponsePart, FileEditCollection, McpAuthRequirement, McpServerState, Message,
+    ModelSelection, PendingMessageKind, ResponsePart, SessionActiveClient, SessionInputRequest,
+    SideChatSelection, TerminalClaim, TerminalInfo, TextRange, ToolCallCancellationReason,
+    ToolCallConfirmationReason, ToolCallContributor, ToolCallResult, ToolCallRiskAssessment,
+    ToolDefinition, ToolInput, ToolResultContent, Turn, UsageInfo,
 };
 
 // ─── ActionType ──────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ pub enum ActionType {
     SessionChatAdded,
     SessionChatRemoved,
     SessionChatUpdated,
+    SessionChatsReordered,
     SessionDefaultChatChanged,
     ChatTurnStarted,
     ChatDelta,
@@ -55,6 +57,12 @@ pub enum ActionType {
     ChatError,
     ChatTurnResume,
     ChatActivityChanged,
+    ChatBackgroundWorkSet,
+    ChatBackgroundWorkRemoved,
+    ChatMovableChanged,
+    ChatChangesetsChanged,
+    ChatCanvasesChanged,
+    CanvasStateChanged,
     ChatWorkingDirectorySet,
     ChatWorkingDirectoryRemoved,
     SessionTitleChanged,
@@ -72,6 +80,8 @@ pub enum ActionType {
     ChatPendingMessageRemoved,
     ChatQueuedMessagesReordered,
     ChatDraftChanged,
+    ChatIsReadChanged,
+    ChatIsArchivedChanged,
     ChatInputRequested,
     ChatInputAnswerChanged,
     ChatInputCompleted,
@@ -82,6 +92,7 @@ pub enum ActionType {
     SessionMcpServerStateChanged,
     SessionMcpServerStartRequested,
     SessionMcpServerStopRequested,
+    SessionMcpServerBackgroundRequested,
     ChatTruncated,
     ChatTurnsLoaded,
     SessionIsReadChanged,
@@ -145,6 +156,7 @@ impl serde::Serialize for ActionType {
             Self::SessionChatAdded => serializer.serialize_str("session/chatAdded"),
             Self::SessionChatRemoved => serializer.serialize_str("session/chatRemoved"),
             Self::SessionChatUpdated => serializer.serialize_str("session/chatUpdated"),
+            Self::SessionChatsReordered => serializer.serialize_str("session/chatsReordered"),
             Self::SessionDefaultChatChanged => {
                 serializer.serialize_str("session/defaultChatChanged")
             }
@@ -169,6 +181,14 @@ impl serde::Serialize for ActionType {
             Self::ChatError => serializer.serialize_str("chat/error"),
             Self::ChatTurnResume => serializer.serialize_str("chat/turnResume"),
             Self::ChatActivityChanged => serializer.serialize_str("chat/activityChanged"),
+            Self::ChatBackgroundWorkSet => serializer.serialize_str("chat/backgroundWorkSet"),
+            Self::ChatBackgroundWorkRemoved => {
+                serializer.serialize_str("chat/backgroundWorkRemoved")
+            }
+            Self::ChatMovableChanged => serializer.serialize_str("chat/movableChanged"),
+            Self::ChatChangesetsChanged => serializer.serialize_str("chat/changesetsChanged"),
+            Self::ChatCanvasesChanged => serializer.serialize_str("chat/canvasesChanged"),
+            Self::CanvasStateChanged => serializer.serialize_str("canvas/stateChanged"),
             Self::ChatWorkingDirectorySet => serializer.serialize_str("chat/workingDirectorySet"),
             Self::ChatWorkingDirectoryRemoved => {
                 serializer.serialize_str("chat/workingDirectoryRemoved")
@@ -204,6 +224,8 @@ impl serde::Serialize for ActionType {
                 serializer.serialize_str("chat/queuedMessagesReordered")
             }
             Self::ChatDraftChanged => serializer.serialize_str("chat/draftChanged"),
+            Self::ChatIsReadChanged => serializer.serialize_str("chat/isReadChanged"),
+            Self::ChatIsArchivedChanged => serializer.serialize_str("chat/isArchivedChanged"),
             Self::ChatInputRequested => serializer.serialize_str("chat/inputRequested"),
             Self::ChatInputAnswerChanged => serializer.serialize_str("chat/inputAnswerChanged"),
             Self::ChatInputCompleted => serializer.serialize_str("chat/inputCompleted"),
@@ -227,6 +249,9 @@ impl serde::Serialize for ActionType {
             }
             Self::SessionMcpServerStopRequested => {
                 serializer.serialize_str("session/mcpServerStopRequested")
+            }
+            Self::SessionMcpServerBackgroundRequested => {
+                serializer.serialize_str("session/mcpServerBackgroundRequested")
             }
             Self::ChatTruncated => serializer.serialize_str("chat/truncated"),
             Self::ChatTurnsLoaded => serializer.serialize_str("chat/turnsLoaded"),
@@ -311,6 +336,7 @@ impl<'de> serde::Deserialize<'de> for ActionType {
             "session/chatAdded" => Self::SessionChatAdded,
             "session/chatRemoved" => Self::SessionChatRemoved,
             "session/chatUpdated" => Self::SessionChatUpdated,
+            "session/chatsReordered" => Self::SessionChatsReordered,
             "session/defaultChatChanged" => Self::SessionDefaultChatChanged,
             "chat/turnStarted" => Self::ChatTurnStarted,
             "chat/delta" => Self::ChatDelta,
@@ -329,6 +355,12 @@ impl<'de> serde::Deserialize<'de> for ActionType {
             "chat/error" => Self::ChatError,
             "chat/turnResume" => Self::ChatTurnResume,
             "chat/activityChanged" => Self::ChatActivityChanged,
+            "chat/backgroundWorkSet" => Self::ChatBackgroundWorkSet,
+            "chat/backgroundWorkRemoved" => Self::ChatBackgroundWorkRemoved,
+            "chat/movableChanged" => Self::ChatMovableChanged,
+            "chat/changesetsChanged" => Self::ChatChangesetsChanged,
+            "chat/canvasesChanged" => Self::ChatCanvasesChanged,
+            "canvas/stateChanged" => Self::CanvasStateChanged,
             "chat/workingDirectorySet" => Self::ChatWorkingDirectorySet,
             "chat/workingDirectoryRemoved" => Self::ChatWorkingDirectoryRemoved,
             "session/titleChanged" => Self::SessionTitleChanged,
@@ -346,6 +378,8 @@ impl<'de> serde::Deserialize<'de> for ActionType {
             "chat/pendingMessageRemoved" => Self::ChatPendingMessageRemoved,
             "chat/queuedMessagesReordered" => Self::ChatQueuedMessagesReordered,
             "chat/draftChanged" => Self::ChatDraftChanged,
+            "chat/isReadChanged" => Self::ChatIsReadChanged,
+            "chat/isArchivedChanged" => Self::ChatIsArchivedChanged,
             "chat/inputRequested" => Self::ChatInputRequested,
             "chat/inputAnswerChanged" => Self::ChatInputAnswerChanged,
             "chat/inputCompleted" => Self::ChatInputCompleted,
@@ -356,6 +390,7 @@ impl<'de> serde::Deserialize<'de> for ActionType {
             "session/mcpServerStateChanged" => Self::SessionMcpServerStateChanged,
             "session/mcpServerStartRequested" => Self::SessionMcpServerStartRequested,
             "session/mcpServerStopRequested" => Self::SessionMcpServerStopRequested,
+            "session/mcpServerBackgroundRequested" => Self::SessionMcpServerBackgroundRequested,
             "chat/truncated" => Self::ChatTruncated,
             "chat/turnsLoaded" => Self::ChatTurnsLoaded,
             "session/isReadChanged" => Self::SessionIsReadChanged,
@@ -510,6 +545,9 @@ pub struct SessionChatRemovedAction {
 /// SHOULD then wait for a {@link SessionChatAddedAction | `session/chatAdded`}.
 ///
 /// Mirrors the root-channel `root/sessionSummaryChanged` notification.
+/// When `changes.status` changes, the host MUST project that exact value into
+/// the matching `SessionChatSummary.status` field and publish
+/// the updated compact chat catalog through `root/sessionSummaryChanged`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionChatUpdatedAction {
@@ -520,6 +558,20 @@ pub struct SessionChatUpdatedAction {
     /// Identity fields (`resource`) never change and MUST be omitted by
     /// senders; receivers SHOULD ignore them if present.
     pub changes: PartialChatSummary,
+}
+
+/// The owning session's authoritative chat catalog order changed.
+///
+/// Host-emitted convergence signal; it never originates from a client
+/// dispatch. `chats` is the complete resulting order and MUST contain every
+/// chat currently in the session exactly once. Reducers replace the catalog
+/// order while preserving each matching summary. Invalid or incomplete orders
+/// are ignored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionChatsReorderedAction {
+    /// Every chat URI in authoritative catalog order.
+    pub chats: Vec<Uri>,
 }
 
 /// The default chat input-routing hint for this session changed.
@@ -711,7 +763,7 @@ pub struct ChatToolCallReadyAction {
     pub risk_assessment: Option<ToolCallRiskAssessment>,
     /// File edits that this tool call will perform, for preview before confirmation
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub edits: Option<AnyValue>,
+    pub edits: Option<FileEditCollection>,
     /// Whether the agent host allows the client to edit the tool's input parameters before confirming
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editable: Option<bool>,
@@ -1044,6 +1096,78 @@ pub struct ChatActivityChangedAction {
     /// Human-readable description of current activity; omit or set `undefined` to clear
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity: Option<String>,
+}
+
+/// Adds or replaces a {@link BackgroundWork} entry by `id`, independently of turn
+/// state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatBackgroundWorkSetAction {
+    /// The complete entry.
+    pub work: BackgroundWork,
+}
+
+/// Removes finished or no-longer-tracked background work; unknown IDs are a no-op.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatBackgroundWorkRemovedAction {
+    /// The {@link BackgroundWorkBase.id | id} of the entry to remove.
+    pub id: String,
+}
+
+/// Whether this chat is structurally eligible to be the source of `moveChat`
+/// changed.
+///
+/// The host is authoritative and MUST also update the owning session's chat
+/// catalog with `session/chatUpdated` so `ChatSummary.movable` stays in sync.
+/// A chat referenced by its owning session's `defaultChat` MUST always carry
+/// `movable: false`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMovableChangedAction {
+    /// Whether this chat is structurally eligible to be moved.
+    pub movable: bool,
+}
+
+/// The {@link Changeset | catalogue of changesets} the agent host advertises
+/// for this chat changed. Replaces
+/// {@link ChatState.changesets | `state.changesets`} entirely
+/// (full-replacement semantics) — set to `undefined` to clear the catalogue.
+///
+/// Entries SHOULD describe Branch, Uncommitted Changes, or other views scoped
+/// to the chat's effective {@link ChatState.workingDirectories | working
+/// directories}. Clients subscribe to each advertised changeset URI for
+/// file-level updates through the existing `changeset/*` action stream.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatChangesetsChangedAction {
+    /// New catalogue, or `undefined` to clear it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changesets: Option<Vec<Changeset>>,
+}
+
+/// The live canvas channels exposed by this chat changed.
+///
+/// Replaces {@link ChatState.canvases | `state.canvases`} entirely. Set to
+/// `undefined` to clear the collection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatCanvasesChangedAction {
+    /// New canvas channel references, or `undefined` to clear the collection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvases: Option<Vec<CanvasReference>>,
+}
+
+/// The presentation state for this canvas changed.
+///
+/// Replaces the subscribed canvas channel state entirely. Full-replacement
+/// semantics intentionally keep this early-development channel free to evolve
+/// without expanding the stable chat action surface.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanvasStateChangedAction {
+    /// New authoritative canvas state.
+    pub canvas: CanvasState,
 }
 
 /// Session title updated. Fired by the server when the title is auto-generated
@@ -1389,6 +1513,34 @@ pub struct ChatDraftChangedAction {
     pub draft: Option<Message>,
 }
 
+/// The read state of the chat changed.
+///
+/// Dispatched by a client to mark any known chat, including the owning
+/// session's default chat, as read (e.g. after viewing it) or unread. This
+/// changes only the addressed chat; it does not change the read state of its
+/// owning session or sibling chats. Use `session/isReadChanged` only to change
+/// the owning session's independent read state. After accepting this action,
+/// the host also synchronizes the addressed chat's `ChatSummary.status` and
+/// `SessionChatSummary.status` projections.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatIsReadChangedAction {
+    /// Whether the chat has been read
+    pub is_read: bool,
+}
+
+/// The archived state of the chat changed.
+///
+/// Dispatched by a client to archive a chat independently of its owning
+/// session or to restore it. Archiving the session's default chat is equivalent
+/// to archiving the session and SHOULD use `session/isArchivedChanged` instead.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatIsArchivedChangedAction {
+    /// Whether the chat is archived
+    pub is_archived: bool,
+}
+
 /// A session requested input from the user.
 ///
 /// Creates an unresolved {@link InputRequestResponsePart} in the active turn,
@@ -1570,6 +1722,31 @@ pub struct SessionMcpServerStopRequestedAction {
     pub id: String,
 }
 
+/// Requests that the host background the startup of an existing
+/// {@link McpServerCustomization} that is currently blocking message
+/// processing (see {@link McpServerStartingState.blocking}), so that new
+/// messages can be processed without waiting for the server to finish
+/// starting.
+///
+/// The server keeps starting in the background; backgrounding only stops the
+/// host from holding message processing on it.
+///
+/// Locates the target entry by `id`, searching both the top-level
+/// customization list and the `children` array of every container. When the
+/// server is {@link McpServerStatus.Starting | `starting`} with
+/// `blocking: true`, the reducer optimistically sets `blocking` to `false`,
+/// preserving the rest of the entry. Is a no-op otherwise (no matching
+/// `McpServerCustomization`, a different lifecycle state, or not blocking).
+/// The host remains authoritative and MAY reject the request by following with
+/// {@link SessionMcpServerStateChangedAction | `session/mcpServerStateChanged`}
+/// restoring `blocking: true`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpServerBackgroundRequestedAction {
+    /// The id of the {@link McpServerCustomization} to background.
+    pub id: String,
+}
+
 /// Truncates a session's history. If `turnId` is provided, all turns after that
 /// turn are removed and the specified turn is kept. If `turnId` is omitted, all
 /// turns are removed.
@@ -1631,8 +1808,9 @@ pub struct SessionMetaChangedAction {
 }
 
 /// The {@link ChangesetState.status} for this changeset transitioned (e.g.
-/// `computing → ready`). The error payload is set together with `status`
-/// whenever it transitions to {@link ChangesetStatus.Error | Error}.
+/// `computing → ready` or `recomputing → ready`). The error payload is set
+/// together with `status` whenever it transitions to
+/// {@link ChangesetStatus.Error | Error}.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangesetStatusChangedAction {
@@ -2030,7 +2208,9 @@ pub struct ResourceWatchChangedAction {
 ///
 /// This side-effect request leaves optimistic catalogue state unchanged. The
 /// host validates trigger ids and configuration, normalizes event-trigger
-/// titles and descriptions, persists the definition, then publishes the
+/// titles and descriptions, captures any
+/// {@link AutomationSessionTemplate.customizations | session customizations}
+/// from the dispatching client, persists the definition, then publishes the
 /// authoritative result with {@link AutomationSetAction | `automation/set`}.
 /// Rejections leave the catalogue unchanged.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2167,9 +2347,20 @@ pub struct PartialChatSummary {
     /// Last modification timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified_at: Option<String>,
+    /// Aggregate summary of file changes associated with this chat. Servers may
+    /// populate this to give clients a quick at-a-glance view of the chat's
+    /// footprint without requiring the client to subscribe to a changeset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changes: Option<ChangesSummary>,
     /// How this chat came into existence
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<ChatOrigin>,
+    /// Whether this chat is structurally eligible to be the source of
+    /// `moveChat`. Absence means `false`.
+    ///
+    /// See {@link ChatState.movable} for the full semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub movable: Option<bool>,
     /// How the user can interact with this chat. See {@link ChatInteractivity}.
     ///
     /// Supports agent-team patterns where worker chats are read-only or hidden.
@@ -2205,6 +2396,8 @@ pub enum StateAction {
     SessionChatRemoved(SessionChatRemovedAction),
     #[serde(rename = "session/chatUpdated")]
     SessionChatUpdated(SessionChatUpdatedAction),
+    #[serde(rename = "session/chatsReordered")]
+    SessionChatsReordered(SessionChatsReorderedAction),
     #[serde(rename = "session/defaultChatChanged")]
     SessionDefaultChatChanged(SessionDefaultChatChangedAction),
     #[serde(rename = "chat/turnStarted")]
@@ -2241,6 +2434,18 @@ pub enum StateAction {
     ChatTurnResume(ChatTurnResumeAction),
     #[serde(rename = "chat/activityChanged")]
     ChatActivityChanged(ChatActivityChangedAction),
+    #[serde(rename = "chat/backgroundWorkSet")]
+    ChatBackgroundWorkSet(ChatBackgroundWorkSetAction),
+    #[serde(rename = "chat/backgroundWorkRemoved")]
+    ChatBackgroundWorkRemoved(ChatBackgroundWorkRemovedAction),
+    #[serde(rename = "chat/movableChanged")]
+    ChatMovableChanged(ChatMovableChangedAction),
+    #[serde(rename = "chat/changesetsChanged")]
+    ChatChangesetsChanged(ChatChangesetsChangedAction),
+    #[serde(rename = "chat/canvasesChanged")]
+    ChatCanvasesChanged(ChatCanvasesChangedAction),
+    #[serde(rename = "canvas/stateChanged")]
+    CanvasStateChanged(CanvasStateChangedAction),
     #[serde(rename = "session/titleChanged")]
     SessionTitleChanged(SessionTitleChangedAction),
     #[serde(rename = "chat/usage")]
@@ -2283,6 +2488,10 @@ pub enum StateAction {
     ChatQueuedMessagesReordered(ChatQueuedMessagesReorderedAction),
     #[serde(rename = "chat/draftChanged")]
     ChatDraftChanged(ChatDraftChangedAction),
+    #[serde(rename = "chat/isReadChanged")]
+    ChatIsReadChanged(ChatIsReadChangedAction),
+    #[serde(rename = "chat/isArchivedChanged")]
+    ChatIsArchivedChanged(ChatIsArchivedChangedAction),
     #[serde(rename = "chat/inputRequested")]
     ChatInputRequested(ChatInputRequestedAction),
     #[serde(rename = "chat/inputAnswerChanged")]
@@ -2303,6 +2512,8 @@ pub enum StateAction {
     SessionMcpServerStartRequested(SessionMcpServerStartRequestedAction),
     #[serde(rename = "session/mcpServerStopRequested")]
     SessionMcpServerStopRequested(SessionMcpServerStopRequestedAction),
+    #[serde(rename = "session/mcpServerBackgroundRequested")]
+    SessionMcpServerBackgroundRequested(SessionMcpServerBackgroundRequestedAction),
     #[serde(rename = "chat/truncated")]
     ChatTruncated(ChatTruncatedAction),
     #[serde(rename = "chat/turnsLoaded")]

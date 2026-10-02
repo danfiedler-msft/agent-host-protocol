@@ -20,15 +20,109 @@ public enum ReconnectResultType
 }
 
 /// <summary>How a new chat uses its source chat and turn.</summary>
-[JsonConverter(typeof(WireEnumConverter<ChatSourceKind>))]
-public enum ChatSourceKind
+[JsonConverter(typeof(ChatSourceKindConverter))]
+public readonly struct ChatSourceKind : IEquatable<ChatSourceKind>
 {
+    private readonly string? _value;
+
+    /// <summary>Wraps a raw wire value — including one this build does not recognize.</summary>
+    /// <param name="value">The raw wire string.</param>
+    public ChatSourceKind(string value)
+    {
+        _value = value;
+    }
+
+    /// <summary>The raw wire value.</summary>
+    public string Value => _value ?? string.Empty;
+
     /// <summary>Copy source history through the referenced turn into the new chat.</summary>
-    [WireValue("fork")]
-    Fork,
+    public static readonly ChatSourceKind Fork = new ChatSourceKind("fork");
+
     /// <summary>Supply source context without copying it into the new chat's visible history.</summary>
-    [WireValue("sideChat")]
-    SideChat,
+    public static readonly ChatSourceKind SideChat = new ChatSourceKind("sideChat");
+
+    /// <inheritdoc />
+    public bool Equals(ChatSourceKind other) => string.Equals(Value, other.Value, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is ChatSourceKind other && Equals(other);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(Value);
+
+    /// <inheritdoc />
+    public override string ToString() => Value;
+
+    /// <summary>Ordinal equality over the raw wire value.</summary>
+    public static bool operator ==(ChatSourceKind left, ChatSourceKind right) => left.Equals(right);
+
+    /// <summary>Ordinal inequality over the raw wire value.</summary>
+    public static bool operator !=(ChatSourceKind left, ChatSourceKind right) => !left.Equals(right);
+}
+
+/// <summary>Reads and writes <see cref="ChatSourceKind"/> as its raw wire string, preserving unrecognized values.</summary>
+internal sealed class ChatSourceKindConverter : JsonConverter<ChatSourceKind>
+{
+    /// <inheritdoc />
+    public override ChatSourceKind Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => new ChatSourceKind(reader.GetString() ?? throw new JsonException("ChatSourceKind expects a JSON string."));
+
+    /// <inheritdoc />
+    public override void Write(Utf8JsonWriter writer, ChatSourceKind value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value.Value);
+}
+
+/// <summary>Destination kind for an atomic chat move.</summary>
+[JsonConverter(typeof(ChatMoveDestinationKindConverter))]
+public readonly struct ChatMoveDestinationKind : IEquatable<ChatMoveDestinationKind>
+{
+    private readonly string? _value;
+
+    /// <summary>Wraps a raw wire value — including one this build does not recognize.</summary>
+    /// <param name="value">The raw wire string.</param>
+    public ChatMoveDestinationKind(string value)
+    {
+        _value = value;
+    }
+
+    /// <summary>The raw wire value.</summary>
+    public string Value => _value ?? string.Empty;
+
+    /// <summary>Move the source chat subtree into an existing session.</summary>
+    public static readonly ChatMoveDestinationKind Session = new ChatMoveDestinationKind("session");
+
+    /// <summary>Move the source chat subtree into a newly allocated session.</summary>
+    public static readonly ChatMoveDestinationKind NewSession = new ChatMoveDestinationKind("newSession");
+
+    /// <inheritdoc />
+    public bool Equals(ChatMoveDestinationKind other) => string.Equals(Value, other.Value, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is ChatMoveDestinationKind other && Equals(other);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(Value);
+
+    /// <inheritdoc />
+    public override string ToString() => Value;
+
+    /// <summary>Ordinal equality over the raw wire value.</summary>
+    public static bool operator ==(ChatMoveDestinationKind left, ChatMoveDestinationKind right) => left.Equals(right);
+
+    /// <summary>Ordinal inequality over the raw wire value.</summary>
+    public static bool operator !=(ChatMoveDestinationKind left, ChatMoveDestinationKind right) => !left.Equals(right);
+}
+
+/// <summary>Reads and writes <see cref="ChatMoveDestinationKind"/> as its raw wire string, preserving unrecognized values.</summary>
+internal sealed class ChatMoveDestinationKindConverter : JsonConverter<ChatMoveDestinationKind>
+{
+    /// <inheritdoc />
+    public override ChatMoveDestinationKind Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => new ChatMoveDestinationKind(reader.GetString() ?? throw new JsonException("ChatMoveDestinationKind expects a JSON string."));
+
+    /// <inheritdoc />
+    public override void Write(Utf8JsonWriter writer, ChatMoveDestinationKind value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value.Value);
 }
 
 /// <summary>Encoding of fetched content data.</summary>
@@ -42,26 +136,108 @@ public enum ContentEncoding
 }
 
 /// <summary>The kind of completion items being requested.</summary>
-[JsonConverter(typeof(WireEnumConverter<CompletionItemKind>))]
-public enum CompletionItemKind
+[JsonConverter(typeof(CompletionItemKindConverter))]
+public readonly struct CompletionItemKind : IEquatable<CompletionItemKind>
 {
+    private readonly string? _value;
+
+    /// <summary>Wraps a raw wire value — including one this build does not recognize.</summary>
+    /// <param name="value">The raw wire string.</param>
+    public CompletionItemKind(string value)
+    {
+        _value = value;
+    }
+
+    /// <summary>The raw wire value.</summary>
+    public string Value => _value ?? string.Empty;
+
     /// <summary>Completions for the text of a {@link Message} the user is composing.
     /// Each returned item carries an attachment that gets associated with the
     /// message when accepted.</summary>
-    [WireValue("userMessage")]
-    UserMessage,
+    public static readonly CompletionItemKind UserMessage = new CompletionItemKind("userMessage");
+
+    /// <inheritdoc />
+    public bool Equals(CompletionItemKind other) => string.Equals(Value, other.Value, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is CompletionItemKind other && Equals(other);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(Value);
+
+    /// <inheritdoc />
+    public override string ToString() => Value;
+
+    /// <summary>Ordinal equality over the raw wire value.</summary>
+    public static bool operator ==(CompletionItemKind left, CompletionItemKind right) => left.Equals(right);
+
+    /// <summary>Ordinal inequality over the raw wire value.</summary>
+    public static bool operator !=(CompletionItemKind left, CompletionItemKind right) => !left.Equals(right);
+}
+
+/// <summary>Reads and writes <see cref="CompletionItemKind"/> as its raw wire string, preserving unrecognized values.</summary>
+internal sealed class CompletionItemKindConverter : JsonConverter<CompletionItemKind>
+{
+    /// <inheritdoc />
+    public override CompletionItemKind Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => new CompletionItemKind(reader.GetString() ?? throw new JsonException("CompletionItemKind expects a JSON string."));
+
+    /// <inheritdoc />
+    public override void Write(Utf8JsonWriter writer, CompletionItemKind value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value.Value);
 }
 
 /// <summary>Discriminant for {@link ResourceResolveResult.type}.</summary>
-[JsonConverter(typeof(WireEnumConverter<ResourceType>))]
-public enum ResourceType
+[JsonConverter(typeof(ResourceTypeConverter))]
+public readonly struct ResourceType : IEquatable<ResourceType>
 {
-    [WireValue("file")]
-    File,
-    [WireValue("directory")]
-    Directory,
-    [WireValue("symlink")]
-    Symlink,
+    private readonly string? _value;
+
+    /// <summary>Wraps a raw wire value — including one this build does not recognize.</summary>
+    /// <param name="value">The raw wire string.</param>
+    public ResourceType(string value)
+    {
+        _value = value;
+    }
+
+    /// <summary>The raw wire value.</summary>
+    public string Value => _value ?? string.Empty;
+
+    public static readonly ResourceType File = new ResourceType("file");
+
+    public static readonly ResourceType Directory = new ResourceType("directory");
+
+    public static readonly ResourceType Symlink = new ResourceType("symlink");
+
+    /// <inheritdoc />
+    public bool Equals(ResourceType other) => string.Equals(Value, other.Value, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is ResourceType other && Equals(other);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(Value);
+
+    /// <inheritdoc />
+    public override string ToString() => Value;
+
+    /// <summary>Ordinal equality over the raw wire value.</summary>
+    public static bool operator ==(ResourceType left, ResourceType right) => left.Equals(right);
+
+    /// <summary>Ordinal inequality over the raw wire value.</summary>
+    public static bool operator !=(ResourceType left, ResourceType right) => !left.Equals(right);
+}
+
+/// <summary>Reads and writes <see cref="ResourceType"/> as its raw wire string, preserving unrecognized values.</summary>
+internal sealed class ResourceTypeConverter : JsonConverter<ResourceType>
+{
+    /// <inheritdoc />
+    public override ResourceType Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => new ResourceType(reader.GetString() ?? throw new JsonException("ResourceType expects a JSON string."));
+
+    /// <inheritdoc />
+    public override void Write(Utf8JsonWriter writer, ResourceType value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value.Value);
 }
 
 /// <summary>How {@link ResourceWriteParams.data} is placed within the target file.
@@ -300,6 +476,11 @@ public sealed record AutomationCapabilities
     /// implementation-defined.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? RunHistoryLimit { get; init; }
+
+    /// <summary>Present when {@link AutomationSessionTemplate.customizations} may contain
+    /// client plugins for the host to capture.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AutomationCustomizationsCapability? Customizations { get; init; }
 }
 
 /// <summary>Presence capability for {@link AutomationCreateRequestedAction |
@@ -333,6 +514,15 @@ public sealed record AutomationRunCancellationCapability
 {
 }
 
+/// <summary>Presence capability for
+/// {@link AutomationSessionTemplate.customizations | automation customizations}.
+///
+/// The empty object means "supported"; fields are reserved for future
+/// capture options and limits.</summary>
+public sealed record AutomationCustomizationsCapability
+{
+}
+
 /// <summary>Re-establishes a dropped connection. The server replays missed actions or
 /// provides fresh snapshots.</summary>
 public sealed record ReconnectParams
@@ -361,7 +551,7 @@ public sealed record ReconnectParams
 public sealed record ReconnectReplayResult
 {
     /// <summary>Discriminant</summary>
-    public ReconnectResultType Type { get; init; }
+    public ReconnectResultType Type { get; init; } = ReconnectResultType.Replay;
 
     /// <summary>Missed action envelopes since `lastSeenServerSeq`</summary>
     public required List<ActionEnvelope> Actions { get; init; }
@@ -377,7 +567,7 @@ public sealed record ReconnectReplayResult
 public sealed record ReconnectSnapshotResult
 {
     /// <summary>Discriminant</summary>
-    public ReconnectResultType Type { get; init; }
+    public ReconnectResultType Type { get; init; } = ReconnectResultType.Snapshot;
 
     /// <summary>Fresh snapshots for each subscription</summary>
     public required List<Snapshot> Snapshots { get; init; }
@@ -541,7 +731,7 @@ public sealed record DisposeSessionParams
 public sealed record ForkChatSource
 {
     /// <summary>Discriminant</summary>
-    public ChatSourceKind Kind { get; init; }
+    public ChatSourceKind Kind { get; init; } = ChatSourceKind.Fork;
 
     /// <summary>URI of the existing source chat.</summary>
     public required string Chat { get; init; }
@@ -557,7 +747,7 @@ public sealed record ForkChatSource
 public sealed record SideChatSource
 {
     /// <summary>Discriminant</summary>
-    public ChatSourceKind Kind { get; init; }
+    public ChatSourceKind Kind { get; init; } = ChatSourceKind.SideChat;
 
     /// <summary>URI of the existing source chat.</summary>
     public required string Chat { get; init; }
@@ -640,6 +830,82 @@ public sealed record DisposeChatParams
     [JsonPropertyName("_meta")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Dictionary<string, JsonElement>? Meta { get; init; }
+}
+
+/// <summary>Moves a chat within or into an existing session.</summary>
+public sealed record ChatMoveToSessionDestination
+{
+    /// <summary>Discriminant</summary>
+    public ChatMoveDestinationKind Kind { get; init; } = ChatMoveDestinationKind.Session;
+
+    /// <summary>Destination session URI.</summary>
+    public required string Session { get; init; }
+
+    /// <summary>Chat after which to place the requested chat.
+    ///
+    /// The anchor MUST be a different chat in the destination session. When
+    /// omitted, the requested chat is placed at the beginning of the catalog.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? After { get; init; }
+}
+
+/// <summary>Moves a top-level chat subtree into a newly allocated session.</summary>
+public sealed record ChatMoveToNewSessionDestination
+{
+    /// <summary>Discriminant</summary>
+    public ChatMoveDestinationKind Kind { get; init; } = ChatMoveDestinationKind.NewSession;
+}
+
+/// <summary>Atomically moves a host-authorized chat within or between sessions.
+///
+/// The source is the chat named by `channel`. When a `session` destination is
+/// the source's current session, only the requested entry is repositioned in
+/// that session's public chat catalog. When it names another session, the host
+/// transfers the requested chat and its complete host-managed descendant
+/// hierarchy. The optional `after` anchor positions the requested chat in the
+/// destination catalog; when omitted, the requested chat is placed first.
+///
+/// A `newSession` destination allocates a session, transfers the complete
+/// hierarchy, and makes the requested chat that session's non-movable default
+/// chat. The host owns descendant relationships; AHP does not expose them as
+/// chat state.
+///
+/// Clients MUST only request a move when the source chat advertises
+/// `movable: true` in its `ChatState` or `ChatSummary`. This is structural
+/// eligibility, not a guarantee that request-specific validation will succeed.
+///
+/// The host MUST validate the complete operation before committing it and MAY
+/// reject unsupported destinations or transient source conditions. At minimum,
+/// the source MUST exist and advertise `movable: true`; the destination and
+/// optional anchor MUST resolve; and the source MUST NOT anchor itself.
+/// Rejection leaves ownership, catalog order, chat state, and root summaries
+/// unchanged.
+///
+/// On success every moved chat keeps its URI, state, and immutable
+/// `ChatOrigin`. The host commits ownership and catalog order before publishing
+/// `session/chatRemoved`, `session/chatAdded`, `session/chatsReordered`, and
+/// root summary updates as applicable. Session and root snapshots are the
+/// durable recovery path after reconnect or an uncertain response.</summary>
+public sealed record MoveChatParams
+{
+    /// <summary>Source chat URI.</summary>
+    public required string Channel { get; init; }
+
+    /// <summary>Optional JSON-serializable metadata associated with this request.
+    /// Receivers MUST ignore keys they do not understand.</summary>
+    [JsonPropertyName("_meta")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, JsonElement>? Meta { get; init; }
+
+    /// <summary>Atomic move destination.</summary>
+    public required ChatMoveDestination Destination { get; init; }
+}
+
+/// <summary>Result of an atomic chat move.</summary>
+public sealed record MoveChatResult
+{
+    /// <summary>Authoritative owning session URI after the move.</summary>
+    public required string Session { get; init; }
 }
 
 /// <summary>Returns a list of session summaries. Used to populate session lists and sidebars.
@@ -1723,7 +1989,32 @@ internal sealed class ChatSourceConverter : UnionConverter<ChatSource>
         ["fork"] = typeof(ForkChatSource),
         ["sideChat"] = typeof(SideChatSource),
             },
-            allowUnknown: false)
+            allowUnknown: true)
+    {
+    }
+}
+[JsonConverter(typeof(ChatMoveDestinationConverter))]
+public sealed class ChatMoveDestination : AhpUnion
+{
+    /// <summary>Creates an empty ChatMoveDestination (no active variant).</summary>
+    public ChatMoveDestination() { }
+
+    /// <summary>Creates a ChatMoveDestination wrapping the given variant value.</summary>
+    public ChatMoveDestination(object? value) : base(value) { }
+}
+
+/// <summary>System.Text.Json converter for the ChatMoveDestination discriminated union.</summary>
+internal sealed class ChatMoveDestinationConverter : UnionConverter<ChatMoveDestination>
+{
+    public ChatMoveDestinationConverter()
+        : base(
+            discriminator: "kind",
+            variants: new Dictionary<string, Type>
+            {
+        ["session"] = typeof(ChatMoveToSessionDestination),
+        ["newSession"] = typeof(ChatMoveToNewSessionDestination),
+            },
+            allowUnknown: true)
     {
     }
 }
@@ -1776,7 +2067,7 @@ internal sealed class ChangesetOperationTargetConverter : UnionConverter<Changes
                 ["resource"] = typeof(ChangesetOperationResourceTarget),
                 ["range"] = typeof(ChangesetOperationRangeTarget),
             },
-            allowUnknown: false)
+            allowUnknown: true)
     {
     }
 }

@@ -39,6 +39,35 @@ public enum ChatSourceKind: Codable, Sendable, Equatable {
     }
 }
 
+/// Destination kind for an atomic chat move.
+public enum ChatMoveDestinationKind: Codable, Sendable, Equatable {
+    /// Move the source chat subtree into an existing session.
+    case session
+    /// Move the source chat subtree into a newly allocated session.
+    case newSession
+    /// Unknown raw value from a newer protocol version, preserved verbatim.
+    case unknown(String)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        switch raw {
+        case "session": self = .session
+        case "newSession": self = .newSession
+        default: self = .unknown(raw)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .session: try container.encode("session")
+        case .newSession: try container.encode("newSession")
+        case .unknown(let raw): try container.encode(raw)
+        }
+    }
+}
+
 /// Encoding of fetched content data.
 public enum ContentEncoding: String, Codable, Sendable {
     case base64 = "base64"
@@ -413,17 +442,22 @@ public struct AutomationCapabilities: Codable, Sendable {
     /// runs are not counted toward the limit. Absence means the retention limit is
     /// implementation-defined.
     public var runHistoryLimit: Int?
+    /// Present when {@link AutomationSessionTemplate.customizations} may contain
+    /// client plugins for the host to capture.
+    public var customizations: AutomationCustomizationsCapability?
 
     public init(
         create: AutomationCreateCapability? = nil,
         schedules: AutomationScheduleCapabilities? = nil,
         runCancellation: AutomationRunCancellationCapability? = nil,
-        runHistoryLimit: Int? = nil
+        runHistoryLimit: Int? = nil,
+        customizations: AutomationCustomizationsCapability? = nil
     ) {
         self.create = create
         self.schedules = schedules
         self.runCancellation = runCancellation
         self.runHistoryLimit = runHistoryLimit
+        self.customizations = customizations
     }
 }
 
@@ -449,6 +483,14 @@ public struct AutomationScheduleCapabilities: Codable, Sendable {
 }
 
 public struct AutomationRunCancellationCapability: Codable, Sendable {
+
+    public init(
+
+    ) {
+    }
+}
+
+public struct AutomationCustomizationsCapability: Codable, Sendable {
 
     public init(
 
@@ -803,6 +845,76 @@ public struct DisposeChatParams: Codable, Sendable {
     ) {
         self.channel = channel
         self.meta = meta
+    }
+}
+
+public struct ChatMoveToSessionDestination: Codable, Sendable {
+    /// Discriminant
+    public var kind: ChatMoveDestinationKind
+    /// Destination session URI.
+    public var session: String
+    /// Chat after which to place the requested chat.
+    ///
+    /// The anchor MUST be a different chat in the destination session. When
+    /// omitted, the requested chat is placed at the beginning of the catalog.
+    public var after: String?
+
+    public init(
+        kind: ChatMoveDestinationKind,
+        session: String,
+        after: String? = nil
+    ) {
+        self.kind = kind
+        self.session = session
+        self.after = after
+    }
+}
+
+public struct ChatMoveToNewSessionDestination: Codable, Sendable {
+    /// Discriminant
+    public var kind: ChatMoveDestinationKind
+
+    public init(
+        kind: ChatMoveDestinationKind
+    ) {
+        self.kind = kind
+    }
+}
+
+public struct MoveChatParams: Codable, Sendable {
+    /// Channel URI this command targets.
+    public var channel: String
+    /// Optional JSON-serializable metadata associated with this request.
+    /// Receivers MUST ignore keys they do not understand.
+    public var meta: [String: AnyCodable]?
+    /// Atomic move destination.
+    public var destination: ChatMoveDestination
+
+    enum CodingKeys: String, CodingKey {
+        case channel
+        case meta = "_meta"
+        case destination
+    }
+
+    public init(
+        channel: String,
+        meta: [String: AnyCodable]? = nil,
+        destination: ChatMoveDestination
+    ) {
+        self.channel = channel
+        self.meta = meta
+        self.destination = destination
+    }
+}
+
+public struct MoveChatResult: Codable, Sendable {
+    /// Authoritative owning session URI after the move.
+    public var session: String
+
+    public init(
+        session: String
+    ) {
+        self.session = session
     }
 }
 
@@ -1656,6 +1768,10 @@ public struct SessionConfigPropertySchema: Codable, Sendable {
     public var readOnly: Bool?
     /// JSON Schema: schema for array items (used when `type` is `'array'`)
     public var items: ConfigPropertySchema?
+    /// JSON Schema: minimum number of array items (used when `type` is `'array'`)
+    public var minItems: Int?
+    /// JSON Schema: maximum number of array items (used when `type` is `'array'`)
+    public var maxItems: Int?
     /// JSON Schema: property descriptors for object properties (used when `type` is `'object'`)
     public var properties: [String: ConfigPropertySchema]?
     /// JSON Schema: list of required property ids (used when `type` is `'object'`)
@@ -1680,6 +1796,8 @@ public struct SessionConfigPropertySchema: Codable, Sendable {
         case enumDescriptions
         case readOnly
         case items
+        case minItems
+        case maxItems
         case properties
         case required
         case additionalProperties
@@ -1697,6 +1815,8 @@ public struct SessionConfigPropertySchema: Codable, Sendable {
         enumDescriptions: [String]? = nil,
         readOnly: Bool? = nil,
         items: ConfigPropertySchema? = nil,
+        minItems: Int? = nil,
+        maxItems: Int? = nil,
         properties: [String: ConfigPropertySchema]? = nil,
         required: [String]? = nil,
         additionalProperties: ConfigPropertySchema? = nil,
@@ -1712,6 +1832,8 @@ public struct SessionConfigPropertySchema: Codable, Sendable {
         self.enumDescriptions = enumDescriptions
         self.readOnly = readOnly
         self.items = items
+        self.minItems = minItems
+        self.maxItems = maxItems
         self.properties = properties
         self.required = required
         self.additionalProperties = additionalProperties
@@ -2123,6 +2245,42 @@ public enum ChatSource: Codable, Sendable {
         switch self {
         case .fork(let value): try value.encode(to: encoder)
         case .sideChat(let value): try value.encode(to: encoder)
+        case .unknown(let value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public enum ChatMoveDestination: Codable, Sendable {
+    case session(ChatMoveToSessionDestination)
+    case newSession(ChatMoveToNewSessionDestination)
+    /// Unknown or future discriminant; the raw payload is preserved
+    /// and re-encoded verbatim for forward-compatibility.
+    case unknown(AnyCodable)
+
+    private enum DiscriminantKey: String, CodingKey {
+        case discriminant = "kind"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DiscriminantKey.self)
+        guard let discriminant = try container.decodeIfPresent(String.self, forKey: .discriminant) else {
+            self = .unknown(try AnyCodable(from: decoder))
+            return
+        }
+        switch discriminant {
+        case "session":
+            self = .session(try ChatMoveToSessionDestination(from: decoder))
+        case "newSession":
+            self = .newSession(try ChatMoveToNewSessionDestination(from: decoder))
+        default:
+            self = .unknown(try AnyCodable(from: decoder))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .session(let value): try value.encode(to: encoder)
+        case .newSession(let value): try value.encode(to: encoder)
         case .unknown(let value): try value.encode(to: encoder)
         }
     }

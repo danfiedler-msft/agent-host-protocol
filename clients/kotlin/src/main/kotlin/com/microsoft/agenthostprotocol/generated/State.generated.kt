@@ -767,6 +767,37 @@ enum class TerminalLifecycleStatus {
 }
 
 /**
+ * Kind of {@link BackgroundWork}.
+ *
+ * This is a general/typological union (not a lifecycle), so the discriminant is
+ * a `*Kind`.
+ */
+@Serializable(with = BackgroundWorkKindSerializer::class)
+@JvmInline
+value class BackgroundWorkKind(val rawValue: String) {
+    companion object {
+        /**
+         * A shell command that continues after its initiating tool call returns.
+         */
+        val SHELL: BackgroundWorkKind = BackgroundWorkKind("shell")
+        /**
+         * A subagent running in the background.
+         */
+        val SUBAGENT: BackgroundWorkKind = BackgroundWorkKind("subagent")
+    }
+}
+
+internal object BackgroundWorkKindSerializer : KSerializer<BackgroundWorkKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("BackgroundWorkKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: BackgroundWorkKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): BackgroundWorkKind =
+        BackgroundWorkKind(decoder.decodeString())
+}
+
+/**
  * Discriminant for the {@link McpServerState} union.
  */
 @Serializable(with = McpServerStatusSerializer::class)
@@ -867,9 +898,15 @@ internal object McpAuthRequiredReasonSerializer : KSerializer<McpAuthRequiredRea
 value class ChangesetStatus(val rawValue: String) {
     companion object {
         /**
-         * The server is still computing the contents of this changeset.
+         * The server is computing this changeset for the first time.
          */
         val COMPUTING: ChangesetStatus = ChangesetStatus("computing")
+        /**
+         * The server is recomputing this changeset. {@link ChangesetState.files}
+         * remains the previous completed result while recomputation is in progress,
+         * including when that result is an empty array.
+         */
+        val RECOMPUTING: ChangesetStatus = ChangesetStatus("recomputing")
         /**
          * The changeset has been fully computed and is up-to-date.
          */
@@ -1086,6 +1123,23 @@ enum class AutomationTriggerKind {
      */
     @SerialName("event")
     EVENT
+}
+
+/**
+ * Discriminant for an {@link AutomationDisableCondition}.
+ */
+@Serializable
+enum class AutomationDisableConditionKind {
+    /**
+     * Stop scheduling after a fixed number of scheduled runs.
+     */
+    @SerialName("afterRuns")
+    AFTER_RUNS,
+    /**
+     * Stop scheduling once a wall-clock date passes.
+     */
+    @SerialName("afterDate")
+    AFTER_DATE
 }
 
 /**
@@ -1340,7 +1394,8 @@ data class AgentCapabilities(
      * clients MUST NOT call `createChat` to open chats beyond the default one the
      * session starts with. An empty object `{}` advertises multi-chat without
      * source-based creation; set {@link MultipleChatsCapability.fork} or
-     * {@link MultipleChatsCapability.sideChat} to allow the corresponding mode.
+     * {@link MultipleChatsCapability.sideChat} to allow the corresponding
+     * creation mode.
      */
     val multipleChats: MultipleChatsCapability? = null,
     /**
@@ -1526,6 +1581,14 @@ data class ConfigPropertySchema(
      */
     val items: ConfigPropertySchema? = null,
     /**
+     * JSON Schema: minimum number of array items (used when `type` is `'array'`)
+     */
+    val minItems: Long? = null,
+    /**
+     * JSON Schema: maximum number of array items (used when `type` is `'array'`)
+     */
+    val maxItems: Long? = null,
+    /**
      * JSON Schema: property descriptors for object properties (used when `type` is `'object'`)
      */
     val properties: Map<String, ConfigPropertySchema>? = null,
@@ -1590,9 +1653,24 @@ data class ChatState(
      */
     val modifiedAt: String,
     /**
+     * Aggregate summary of file changes associated with this chat. Servers may
+     * populate this to give clients a quick at-a-glance view of the chat's
+     * footprint without requiring the client to subscribe to a changeset.
+     */
+    val changes: ChangesSummary? = null,
+    /**
      * How this chat came into existence
      */
     val origin: ChatOrigin? = null,
+    /**
+     * Whether this chat is eligible to be the source of `moveChat`, including
+     * same-session ordering.
+     *
+     * The host is authoritative. Absence means `false`. A `true` value does not
+     * guarantee that a particular request will succeed. A chat referenced by its
+     * owning session's `defaultChat` MUST NOT be movable.
+     */
+    val movable: Boolean? = null,
     /**
      * How the user can interact with this chat. See {@link ChatInteractivity}.
      *
@@ -1615,6 +1693,36 @@ data class ChatState(
      * update the subset on a running chat.
      */
     val workingDirectories: List<String>? = null,
+    /**
+     * Catalogue of changesets the server can produce for this chat. Each entry
+     * advertises a subscribable view of file changes scoped to the chat's
+     * effective working directories and the URI template the client expands
+     * before subscribing. See {@link Changeset} for the full shape and
+     * {@link /guide/changesets | Changesets} for an overview of the model.
+     *
+     * This catalogue is intentionally absent from {@link ChatSummary}; clients
+     * obtain it by subscribing to the chat channel.
+     */
+    val changesets: List<Changeset>? = null,
+    /**
+     * Work running in the background for this chat, such as shells and
+     * subagents. Only active work is listed: hosts remove an entry once the work
+     * ends. An entry may have been started by an earlier turn rather than the
+     * {@link ChatState.activeTurn | activeTurn}.
+     *
+     * Like {@link ChatState.changesets | changesets}, this is intentionally
+     * absent from {@link ChatSummary}; clients obtain it by subscribing to the
+     * chat channel.
+     */
+    val backgroundWork: List<BackgroundWork>? = null,
+    /**
+     * Live canvases currently exposed by this chat.
+     *
+     * Entries intentionally contain only subscribable channel references.
+     * Clients subscribe to each resource for the experimental presentation
+     * state, including its current live source URL.
+     */
+    val canvases: List<CanvasReference>? = null,
     /**
      * Completed turns
      */
@@ -1684,9 +1792,22 @@ data class ChatSummary(
      */
     val modifiedAt: String,
     /**
+     * Aggregate summary of file changes associated with this chat. Servers may
+     * populate this to give clients a quick at-a-glance view of the chat's
+     * footprint without requiring the client to subscribe to a changeset.
+     */
+    val changes: ChangesSummary? = null,
+    /**
      * How this chat came into existence
      */
     val origin: ChatOrigin? = null,
+    /**
+     * Whether this chat is structurally eligible to be the source of
+     * `moveChat`. Absence means `false`.
+     *
+     * See {@link ChatState.movable} for the full semantics.
+     */
+    val movable: Boolean? = null,
     /**
      * How the user can interact with this chat. See {@link ChatInteractivity}.
      *
@@ -1792,13 +1913,15 @@ data class SessionState(
     val activeClients: List<SessionActiveClient>,
     /**
      * Catalog of chats in this session.
+     *
+     * Order is host-authoritative and durable. Catalog order is independent of
+     * `defaultChat`.
      */
     val chats: List<ChatSummary>,
     /**
      * The chat that receives input when the user addresses the session without
-     * selecting a specific chat. This is a UI routing hint, not a hierarchy
-     * marker — chats remain equal peers at the protocol level. Hosts MAY change
-     * this over the session's lifetime.
+     * selecting a specific chat. This routing designation does not determine the
+     * chat's catalog position. Hosts MAY change it over the session's lifetime.
      */
     val defaultChat: String? = null,
     /**
@@ -1889,6 +2012,118 @@ data class SessionActiveClient(
      * children inside {@link SessionState.customizations}.
      */
     val customizations: List<ClientPluginCustomization>? = null
+)
+
+@Serializable
+data class BackgroundShellWork(
+    /**
+     * Identifier of this entry, unique within the owning chat across all kinds.
+     * The host derives it however it likes (for example from the kind plus the
+     * agent's own task id); consumers MUST treat it as opaque. It is the key for
+     * the `chat/backgroundWorkSet` / `chat/backgroundWorkRemoved` upsert
+     * convention.
+     */
+    val id: String,
+    /**
+     * Human-readable label, such as the command's purpose or the subagent's name.
+     */
+    val label: String,
+    /**
+     * ISO 8601 timestamp when the work started.
+     */
+    val startedAt: String,
+    /**
+     * Provider-specific metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    val kind: BackgroundWorkKind,
+    /**
+     * Command line, displayed as plain text.
+     */
+    val command: String,
+    /**
+     * Terminal carrying this shell's output. Hosts SHOULD set this whenever they
+     * can show that output. Clients open it like
+     * {@link ToolResultTerminalContent.resource}; `isPty` on its
+     * {@link TerminalState} says whether the output is plain text.
+     */
+    val terminal: String? = null
+)
+
+@Serializable
+data class BackgroundSubagentWork(
+    /**
+     * Identifier of this entry, unique within the owning chat across all kinds.
+     * The host derives it however it likes (for example from the kind plus the
+     * agent's own task id); consumers MUST treat it as opaque. It is the key for
+     * the `chat/backgroundWorkSet` / `chat/backgroundWorkRemoved` upsert
+     * convention.
+     */
+    val id: String,
+    /**
+     * Human-readable label, such as the command's purpose or the subagent's name.
+     */
+    val label: String,
+    /**
+     * ISO 8601 timestamp when the work started.
+     */
+    val startedAt: String,
+    /**
+     * Provider-specific metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    val kind: BackgroundWorkKind,
+    /**
+     * The subagent's chat: the same chat the spawning tool call's
+     * {@link ToolResultSubagentContent.resource} points to.
+     */
+    val chat: String
+)
+
+@Serializable
+data class CanvasReference(
+    /**
+     * Canvas channel URI. Subscribe to this resource for the full state.
+     */
+    val resource: String
+)
+
+@Serializable
+data class CanvasState(
+    /**
+     * Stable caller-supplied instance identifier.
+     */
+    val instanceId: String,
+    /**
+     * Owning extension/provider identifier.
+     */
+    val extensionId: String,
+    /**
+     * Owning extension display name, when available.
+     */
+    val extensionName: String? = null,
+    /**
+     * Provider-local canvas type identifier.
+     */
+    val canvasId: String,
+    /**
+     * Provider-supplied title, when available.
+     */
+    val title: String? = null,
+    /**
+     * Provider-supplied status text, when available.
+     */
+    val status: String? = null,
+    /**
+     * Current absolute HTTP(S) source URL; absent when the live source is unavailable.
+     * Hosts MUST clear this field when the provider becomes unavailable.
+     *
+     * Source URLs MUST be redacted from diagnostic logs and MUST NOT be reused
+     * from persisted state after a provider or host restart.
+     */
+    val url: String? = null
 )
 
 @Serializable
@@ -2073,7 +2308,58 @@ data class SessionSummary(
      * and session notifications.
      */
     @SerialName("_meta")
-    val meta: Map<String, JsonElement>? = null
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Lightweight host-authoritative ordered chat catalog.
+     */
+    val chats: List<SessionChatSummary>? = null,
+    /**
+     * Chat that receives input when none is selected, independent of catalog position.
+     */
+    val defaultChat: String? = null
+)
+
+@Serializable
+data class SessionChatSummary(
+    /**
+     * Canonical chat URI
+     */
+    val resource: String,
+    /**
+     * Human-readable chat title
+     */
+    val title: String,
+    /**
+     * How this chat was created, when known
+     */
+    val origin: ChatOrigin? = null,
+    /**
+     * How the user can interact with this chat.
+     *
+     * Generic clients use this to omit hidden chats and disable input for
+     * read-only chats. Absence defaults to {@link ChatInteractivity.Full} for
+     * backward compatibility.
+     */
+    val interactivity: ChatInteractivity? = null,
+    /**
+     * Current chat status, matching {@link ChatSummary.status}.
+     *
+     * Includes the activity bits and the orthogonal {@link SessionStatus.IsRead}
+     * and {@link SessionStatus.IsArchived} flags. Generic clients use these bits
+     * to present read, unread, or archived chats in session lists without
+     * subscribing to the session or chat channel. Absence means the host did
+     * not provide the status; clients MUST treat it as unknown, not as unread
+     * or unarchived.
+     */
+    val status: SessionStatus? = null,
+    /**
+     * Aggregate summary of file changes associated with this chat.
+     *
+     * Servers may populate this so session lists can show per-chat change
+     * counts without subscribing to the session or chat channel. Updates travel
+     * with the rest of the catalog in `root/sessionSummaryChanged`.
+     */
+    val changes: ChangesSummary? = null
 )
 
 @Serializable
@@ -3067,7 +3353,7 @@ data class ToolCallPendingConfirmationState(
     /**
      * File edits that this tool call will perform, for preview before confirmation
      */
-    val edits: JsonElement? = null,
+    val edits: FileEditCollection? = null,
     /**
      * Whether the agent host allows the client to edit the tool's input parameters before confirming
      */
@@ -3580,15 +3866,15 @@ data class ToolResultFileEditContent(
     /**
      * The file state before the edit. Absent for file creations or for in-place file edits.
      */
-    val before: JsonElement? = null,
+    val before: FileEditSide? = null,
     /**
      * The file state after the edit. Absent for file deletions.
      */
-    val after: JsonElement? = null,
+    val after: FileEditSide? = null,
     /**
      * Optional diff display metadata
      */
-    val diff: JsonElement? = null,
+    val diff: FileEditDiffStats? = null,
     val type: ToolResultContentType
 )
 
@@ -3596,7 +3882,7 @@ data class ToolResultFileEditContent(
 data class ToolResultTerminalContent(
     val type: ToolResultContentType,
     /**
-     * Terminal URI (subscribable for full terminal state)
+     * Terminal URI (subscribable for live or retained terminal state)
      */
     val resource: String,
     /**
@@ -4399,7 +4685,18 @@ data class AhpMcpUiHostCapabilities(
 
 @Serializable
 data class McpServerStartingState(
-    val kind: McpServerStatus
+    val kind: McpServerStatus,
+    /**
+     * Hosts SHOULD set this to `true` when this server's startup will hold back
+     * the processing of new messages (for example, the next turn) while the
+     * server's contributions — such as its tools — are discovered.
+     *
+     * Clients MAY dispatch
+     * {@link SessionMcpServerBackgroundRequestedAction | `session/mcpServerBackgroundRequested`}
+     * through an appropriate affordance to ask the host to background the
+     * startup.
+     */
+    val blocking: Boolean? = null
 )
 
 @Serializable
@@ -4522,19 +4819,48 @@ data class ToolCallMcpContributor(
 )
 
 @Serializable
+data class FileEditSide(
+    /**
+     * URI of the file on this side of the edit
+     */
+    val uri: String,
+    /**
+     * Reference to the file content on this side of the edit
+     */
+    val content: ContentRef
+)
+
+@Serializable
+data class FileEditDiffStats(
+    /**
+     * Number of items added (e.g., lines for text files, cells for notebooks)
+     */
+    val added: Long? = null,
+    /**
+     * Number of items removed (e.g., lines for text files, cells for notebooks)
+     */
+    val removed: Long? = null
+)
+
+@Serializable
 data class FileEdit(
     /**
      * The file state before the edit. Absent for file creations or for in-place file edits.
      */
-    val before: JsonElement? = null,
+    val before: FileEditSide? = null,
     /**
      * The file state after the edit. Absent for file deletions.
      */
-    val after: JsonElement? = null,
+    val after: FileEditSide? = null,
     /**
      * Optional diff display metadata
      */
-    val diff: JsonElement? = null
+    val diff: FileEditDiffStats? = null
+)
+
+@Serializable
+data class FileEditCollection(
+    val items: List<FileEdit>
 )
 
 @Serializable
@@ -4774,7 +5100,7 @@ data class ErrorInfo(
 @Serializable
 data class Snapshot(
     /**
-     * The subscribed channel URI (e.g. `ahp-root://`, `ahp-session:/<uuid>`, or `ahp-chat:/<uuid>`)
+     * The subscribed channel URI (e.g. `ahp-root://`, `ahp-session:/<uuid>`, `ahp-chat:/<uuid>`, or `ahp-canvas:/<uuid>`)
      */
     val resource: String,
     /**
@@ -4804,8 +5130,8 @@ data class Changeset(
      *
      * | Variables in template                       | Meaning                                                                              |
      * | ------------------------------------------- | ------------------------------------------------------------------------------------ |
-     * | _(none)_                                    | A static, session-wide changeset. The template is itself a subscribable URI.         |
-     * | `{turnId}`                                  | Per-turn slice. Expand with a `Turn.id` from the session.                            |
+     * | _(none)_                                    | A static changeset scoped to the advertising session or chat. The template is itself a subscribable URI. |
+     * | `{turnId}`                                  | Per-turn slice. Expand with a `Turn.id` from the advertising chat or session.        |
      * | `{originalTurnId}` and `{modifiedTurnId}`   | Diff between two turns. Both variables MUST be present.                              |
      *
      * Future protocol versions MAY add new well-known variables.
@@ -4839,11 +5165,11 @@ data class Changeset(
      * Optional capability declarations for this changeset. Absent (or an empty
      * object) means the changeset advertises no optional capabilities.
      *
-     * Because the catalogue entry is delivered up-front on
-     * {@link ChangesetState | the session's changeset list}, clients can decide
-     * whether to surface capability-gated UI (such as review checkboxes) without
-     * first subscribing to the changeset URI. Mirrors the presence-flag
-     * convention of `ClientCapabilities`.
+     * Because the catalogue entry is delivered up-front on the advertising
+     * session or chat's changeset list, clients can decide whether to surface
+     * capability-gated UI (such as review checkboxes) without first subscribing
+     * to the changeset URI. Mirrors the presence-flag convention of
+     * `ClientCapabilities`.
      */
     val capabilities: ChangesetCapabilities? = null
 )
@@ -5303,7 +5629,33 @@ data class AutomationSessionTemplate(
      * {@link CreateSessionParams.config}, normally obtained from
      * {@link ResolveSessionConfigResult.values}.
      */
-    val config: Map<String, JsonElement>? = null
+    val config: Map<String, JsonElement>? = null,
+    /**
+     * Client plugins to make available in every run session, in the same
+     * published shape as
+     * {@link SessionActiveClient.customizations | `activeClients[].customizations`}.
+     * Entries are keyed by `id`.
+     *
+     * Runs usually start when no client is connected, so the host does not
+     * resolve these URIs at run time. Instead, when it accepts a
+     * {@link AutomationCreateRequestedAction | `automation/createRequested`} or
+     * {@link AutomationUpdateRequestedAction | `automation/updateRequested`}
+     * that adds an entry or changes an entry's `uri` or `nonce`, the host
+     * captures a host-owned copy of the plugin. For client-served URIs such as
+     * `virtual://…`, it reads the contents from the dispatching client with
+     * server→client `resource*` requests. If a capture fails, the host rejects
+     * the whole action. Entries whose `id`, `uri`, and `nonce` are unchanged keep
+     * their existing copy, so any client can re-submit a template it received
+     * without being able to serve the plugin itself. The resulting copies are
+     * reported in {@link AutomationEntry.customizations}.
+     *
+     * The host MAY share one stored copy between entries with equal `uri` and
+     * `nonce`, including across automations; this is not observable to clients.
+     *
+     * Clients MUST NOT set this field unless the host advertises
+     * {@link AutomationCapabilities.customizations}.
+     */
+    val customizations: List<ClientPluginCustomization>? = null
 )
 
 @Serializable
@@ -5331,6 +5683,22 @@ data class AutomationDefinition(
      */
     val triggers: List<AutomationTrigger>,
     /**
+     * Self-disable rules combined with logical OR: the host sets
+     * {@link AutomationDefinition.enabled} to `false` when any condition is met.
+     * Absent or empty means no automatic disable conditions. Each
+     * {@link AutomationDisableConditionKind} may appear at most once; hosts MUST
+     * reject create or update requests containing duplicate kinds.
+     *
+     * Only automatic (scheduled) runs are governed; manual runs via
+     * {@link RunAutomationParams | runAutomation} are never blocked. For a
+     * {@link AutomationAfterRunsCondition}, usage is tracked by the host-owned
+     * {@link AutomationEntry.runCount}. Adding that kind when absent or
+     * a disabled→enabled transition starts a fresh allowance. Clearing the
+     * conditions does not re-enable a disabled automation. See the
+     * {@link /guide/automations | Automations Guide}.
+     */
+    val disableConditions: List<AutomationDisableCondition>? = null,
+    /**
      * Opaque implementation-defined metadata. Clients MUST preserve unknown
      * entries when updating the definition.
      */
@@ -5350,7 +5718,9 @@ data class AutomationDefinitionPatch(
     val message: Message? = null,
     /**
      * Replacement {@link AutomationDefinition.session}. The host revalidates
-     * affected event triggers when their discovery context changes.
+     * affected event triggers when their discovery context changes, and
+     * captures {@link AutomationSessionTemplate.customizations} entries that
+     * are new or whose `uri` or `nonce` changed.
      */
     val session: AutomationSessionTemplate? = null,
     /**
@@ -5363,10 +5733,35 @@ data class AutomationDefinitionPatch(
      */
     val triggers: List<AutomationTrigger>? = null,
     /**
+     * Complete replacement {@link AutomationDefinition.disableConditions}.
+     * Omit to leave unchanged; supply an empty array to remove all conditions.
+     * Each kind may appear at most once; hosts MUST reject duplicate kinds.
+     * Clearing conditions does not change {@link AutomationDefinition.enabled}.
+     */
+    val disableConditions: List<AutomationDisableCondition>? = null,
+    /**
      * Complete replacement {@link AutomationDefinition._meta}.
      */
     @SerialName("_meta")
     val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AutomationAfterRunsCondition(
+    val kind: AutomationDisableConditionKind,
+    /**
+     * Positive-integer cap on scheduled runs.
+     */
+    val max: Long
+)
+
+@Serializable
+data class AutomationAfterDateCondition(
+    val kind: AutomationDisableConditionKind,
+    /**
+     * ISO 8601 timestamp after which scheduling stops.
+     */
+    val date: String
 )
 
 @Serializable
@@ -5384,6 +5779,20 @@ data class AutomationEntry(
      */
     val nextRunAt: String? = null,
     /**
+     * Host-owned count of scheduled runs consumed against the current
+     * {@link AutomationAfterRunsCondition} allowance. Authoritative usage for the
+     * **current** allowance, not a lifetime total: the host resets it to `0` when
+     * a disabled→enabled transition starts a fresh allowance or a
+     * {@link AutomationAfterRunsCondition} is added when none was present. It is NOT
+     * reconstructed from {@link runs} (a bounded, prunable window). The host
+     * increments it atomically when it admits a scheduled run, including runs
+     * later cancelled or failed.
+     *
+     * Absent when {@link AutomationDefinition.disableConditions} contains no
+     * {@link AutomationAfterRunsCondition}.
+     */
+    val runCount: Long? = null,
+    /**
      * Newest-first retained run summaries. This is a bounded window; use
      * {@link FetchAutomationRunsParams | fetchAutomationRuns} when
      * {@link AutomationEntry.runsNextCursor} is present.
@@ -5397,6 +5806,22 @@ data class AutomationEntry(
      * Operations currently permitted for this automation.
      */
     val operations: List<AutomationOperation>,
+    /**
+     * Host-owned copies of the plugins in
+     * {@link AutomationSessionTemplate.customizations}, one per template entry
+     * with the same `id`. Absent when the template has no customizations.
+     *
+     * Each copy's `uri` identifies the captured contents, which clients can
+     * browse with `resourceRead`. `children` and `load` report what the host
+     * found in that copy, independent of whether the originating client is
+     * connected. `clientId` is absent because the copy no longer depends on a
+     * client.
+     *
+     * Every run session receives these plugins in
+     * {@link SessionState.customizations}, with the enablement from the
+     * matching template entry.
+     */
+    val customizations: List<PluginCustomization>? = null,
     /**
      * Creation timestamp in ISO 8601 format.
      */
@@ -6696,6 +7121,54 @@ internal object SessionInputRequestSerializer : KSerializer<SessionInputRequest>
         output.encodeJsonElement(element)
     }
 }
+@Serializable(with = BackgroundWorkSerializer::class)
+sealed interface BackgroundWork
+
+@JvmInline
+value class BackgroundWorkShell(val value: BackgroundShellWork) : BackgroundWork
+@JvmInline
+value class BackgroundWorkSubagent(val value: BackgroundSubagentWork) : BackgroundWork
+/**
+ * Forward-compat catch-all for unknown BackgroundWork discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class BackgroundWorkUnknown(val raw: JsonObject) : BackgroundWork
+
+internal object BackgroundWorkSerializer : KSerializer<BackgroundWork> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("BackgroundWork")
+
+    override fun deserialize(decoder: Decoder): BackgroundWork {
+        val input = decoder as? JsonDecoder
+            ?: error("BackgroundWork can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for BackgroundWork")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return BackgroundWorkUnknown(obj)
+        return when (discriminant) {
+            "shell" -> BackgroundWorkShell(input.json.decodeFromJsonElement(BackgroundShellWork.serializer(), element))
+            "subagent" -> BackgroundWorkSubagent(input.json.decodeFromJsonElement(BackgroundSubagentWork.serializer(), element))
+            else -> BackgroundWorkUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: BackgroundWork) {
+        val output = encoder as? JsonEncoder
+            ?: error("BackgroundWork can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is BackgroundWorkShell -> output.json.encodeToJsonElement(BackgroundShellWork.serializer(), value.value)
+            is BackgroundWorkSubagent -> output.json.encodeToJsonElement(BackgroundSubagentWork.serializer(), value.value)
+            is BackgroundWorkUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
 
 @Serializable(with = SessionOriginSerializer::class)
 sealed interface SessionOrigin
@@ -6786,6 +7259,50 @@ internal object AutomationTriggerSerializer : KSerializer<AutomationTrigger> {
         val discriminant = when (value) {
             is AutomationTriggerSchedule -> "schedule"
             is AutomationTriggerEvent -> "event"
+        }
+        if (discriminant != null) encodedObject["kind"] = JsonPrimitive(discriminant)
+        output.encodeJsonElement(JsonObject(encodedObject))
+    }
+}
+
+@Serializable(with = AutomationDisableConditionSerializer::class)
+sealed interface AutomationDisableCondition
+
+@JvmInline
+value class AutomationDisableConditionAfterRuns(val value: AutomationAfterRunsCondition) : AutomationDisableCondition
+@JvmInline
+value class AutomationDisableConditionAfterDate(val value: AutomationAfterDateCondition) : AutomationDisableCondition
+
+internal object AutomationDisableConditionSerializer : KSerializer<AutomationDisableCondition> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("AutomationDisableCondition")
+
+    override fun deserialize(decoder: Decoder): AutomationDisableCondition {
+        val input = decoder as? JsonDecoder
+            ?: error("AutomationDisableCondition can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for AutomationDisableCondition")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: error("Missing kind discriminator on AutomationDisableCondition")
+        return when (discriminant) {
+            "afterRuns" -> AutomationDisableConditionAfterRuns(input.json.decodeFromJsonElement(AutomationAfterRunsCondition.serializer(), element))
+            "afterDate" -> AutomationDisableConditionAfterDate(input.json.decodeFromJsonElement(AutomationAfterDateCondition.serializer(), element))
+            else -> error("Unknown AutomationDisableCondition discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: AutomationDisableCondition) {
+        val output = encoder as? JsonEncoder
+            ?: error("AutomationDisableCondition can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is AutomationDisableConditionAfterRuns -> output.json.encodeToJsonElement(AutomationAfterRunsCondition.serializer(), value.value)
+            is AutomationDisableConditionAfterDate -> output.json.encodeToJsonElement(AutomationAfterDateCondition.serializer(), value.value)
+        }
+        val encodedObject = element.jsonObject.toMutableMap()
+        val discriminant = when (value) {
+            is AutomationDisableConditionAfterRuns -> "afterRuns"
+            is AutomationDisableConditionAfterDate -> "afterDate"
         }
         if (discriminant != null) encodedObject["kind"] = JsonPrimitive(discriminant)
         output.encodeJsonElement(JsonObject(encodedObject))
@@ -6960,6 +7477,7 @@ sealed interface SnapshotState {
     @JvmInline value class Root(val value: RootState) : SnapshotState
     @JvmInline value class Session(val value: SessionState) : SnapshotState
     @JvmInline value class Chat(val value: ChatState) : SnapshotState
+    @JvmInline value class Canvas(val value: CanvasState) : SnapshotState
     @JvmInline value class Terminal(val value: TerminalState) : SnapshotState
     @JvmInline value class Changeset(val value: ChangesetState) : SnapshotState
     @JvmInline value class ResourceWatch(val value: ResourceWatchState) : SnapshotState
@@ -6994,6 +7512,8 @@ internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
                 SnapshotState.Automations(input.json.decodeFromJsonElement(AutomationState.serializer(), element))
             obj.containsKey("lifecycle") -> SnapshotState.Session(input.json.decodeFromJsonElement(SessionState.serializer(), element))
             obj.containsKey("turns") -> SnapshotState.Chat(input.json.decodeFromJsonElement(ChatState.serializer(), element))
+            obj.containsKey("instanceId") && obj.containsKey("extensionId") && obj.containsKey("canvasId") ->
+                SnapshotState.Canvas(input.json.decodeFromJsonElement(CanvasState.serializer(), element))
             obj.containsKey("status") && obj.containsKey("files") ->
                 SnapshotState.Changeset(input.json.decodeFromJsonElement(ChangesetState.serializer(), element))
             obj.containsKey("root") && obj.containsKey("recursive") ->
@@ -7013,6 +7533,7 @@ internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
             is SnapshotState.Root -> output.json.encodeToJsonElement(RootState.serializer(), value.value)
             is SnapshotState.Session -> output.json.encodeToJsonElement(SessionState.serializer(), value.value)
             is SnapshotState.Chat -> output.json.encodeToJsonElement(ChatState.serializer(), value.value)
+            is SnapshotState.Canvas -> output.json.encodeToJsonElement(CanvasState.serializer(), value.value)
             is SnapshotState.Terminal -> output.json.encodeToJsonElement(TerminalState.serializer(), value.value)
             is SnapshotState.Changeset -> output.json.encodeToJsonElement(ChangesetState.serializer(), value.value)
             is SnapshotState.ResourceWatch -> output.json.encodeToJsonElement(ResourceWatchState.serializer(), value.value)

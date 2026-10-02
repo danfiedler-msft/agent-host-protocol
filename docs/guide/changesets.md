@@ -1,23 +1,32 @@
 # Changesets
 
 A **changeset** is a named, individually subscribable view of file changes
-associated with a session. Changesets generalise the v0.1.0
+associated with a session or one of its chats. Changesets generalise the v0.1.0
 `SessionSummary.diffs` field: a session can expose any number of
 changesets — uncommitted working-tree edits, the diff between two turns,
 the cumulative changes for the whole session, the staged index, etc. —
-each with its own URI, lifecycle, and update stream.
+each with its own URI, lifecycle, and update stream. A chat can additionally
+advertise its own Branch and Uncommitted Changes views, scoped to that chat's
+effective working directories.
 
 ## Concepts
 
 ### Changeset Catalogue
 
-Each session's `SessionState` advertises the set of changesets the
-server can produce. The catalogue entry is intentionally lightweight —
-just enough to render a chip or list row without subscribing — and
-references a full subscribable `ChangesetState` by URI.
+Each session's `SessionState` can advertise session-level changesets, and each
+subscribed `ChatState` can advertise changesets for that chat. The catalogue
+entry is intentionally lightweight — just enough to render a chip or list row
+without subscribing — and references a full subscribable `ChangesetState` by
+URI. `ChatSummary` does not carry this catalogue; clients that need per-chat
+changesets subscribe to that chat.
 
 ```typescript
 SessionState {
+  // ...existing fields...
+  changesets?: Changeset[]
+}
+
+ChatState {
   // ...existing fields...
   changesets?: Changeset[]
 }
@@ -51,8 +60,8 @@ unknown variables.
 
 | Variables in template                     | Meaning                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------- |
-| _(none)_                                  | A static, session-wide changeset. The template is itself a subscribable URI. |
-| `{turnId}`                                | Per-turn slice. Expand with a `Turn.id` from one of the session's chats.     |
+| _(none)_                                  | A static changeset scoped to the advertising session or chat. The template is itself a subscribable URI. |
+| `{turnId}`                                | Per-turn slice. Expand with a `Turn.id` from the advertising chat or session. |
 | `{originalTurnId}` and `{modifiedTurnId}` | Diff between two turns. Both must be present.                                |
 
 ### Multiroot Sessions
@@ -69,13 +78,20 @@ entry per working directory — for clients that prefer server-scoped views. Thi
 needs no extra field: the `changesets` catalogue is already a list, so a host
 lists one entry per directory alongside the spanning ones.
 
+For a chat catalogue, "session-wide" above means the chat's effective working
+directory set: `ChatState.workingDirectories` when present, otherwise the
+owning session's full `workingDirectories`. A host SHOULD scope each advertised
+chat changeset to that set. This allows chats backed by different repositories
+or worktrees to expose independent Branch and Uncommitted Changes entries while
+reusing the same changeset state and action contract.
+
 ### Changeset State
 
 Each concrete (expanded) changeset URI is its own subscribable resource.
 
 ```typescript
 ChangesetState {
-  status: 'computing' | 'ready' | 'error'
+  status: 'computing' | 'recomputing' | 'ready' | 'error'
   error?: ErrorInfo
   files: ChangesetFile[]
   operations?: ChangesetOperation[]
@@ -89,12 +105,19 @@ ChangesetFile {
 }
 ```
 
+`computing` means the host is producing the first result and no completed
+result is available yet. `recomputing` means the host is refreshing an existing
+result; while it does so, `files` remains the previous completed result,
+including when that result is an empty array. This lets clients distinguish an
+initial empty placeholder from a cached empty result without inspecting the
+array.
+
 Updates flow through changeset-scoped actions, broadcast to subscribers
 of the changeset URI:
 
 | Type                                | Client-dispatchable? | When                                                                         |
 | ----------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
-| `changeset/statusChanged`           | No                   | `status` transitioned (e.g. `computing → ready`).                            |
+| `changeset/statusChanged`           | No                   | `status` transitioned (e.g. `computing → ready` or `ready → recomputing`).   |
 | `changeset/fileSet`                 | No                   | Upsert a `ChangesetFile` (new or replacing existing by `id`).                |
 | `changeset/fileRemoved`             | No                   | A file is no longer in the changeset.                                        |
 | `changeset/filesReviewChanged`      | Yes                  | A reviewer toggled the `reviewed` flag on one or more files.                 |
@@ -102,6 +125,44 @@ of the changeset URI:
 | `changeset/operationsChanged`       | No                   | The set of available `operations` changed.                                   |
 | `changeset/operationStatusChanged`  | No                   | A single operation's `status` transitioned (e.g. `idle → running → error`).  |
 | `changeset/cleared`                 | No                   | All files dropped (e.g. branch switched, or the owning session ended).       |
+
+### Typed file-edit models
+
+The client API uses three shared model types:
+
+| Type | Purpose |
+| --- | --- |
+| `FileEditSide` | A file URI and its required `ContentRef`. |
+| `FileEditDiffStats` | Optional added and removed item counts. |
+| `FileEditCollection` | The preview wrapper with required `items`. |
+
+`FileEdit.before` and `after` use the same side type.
+`ToolResultFileEditContent` exposes the same fields.
+The ready action and pending-confirmation state both expose previews through
+`edits.items`.
+
+When migrating from a client with raw-JSON file-edit properties, replace JSON
+lookups and construction with these typed properties and constructors.
+This changes the affected SDK APIs, not the JSON structure. Kotlin consumers
+must also rebuild dependent binaries.
+
+Sides remain optional. In Kotlin, a present side requires its file URI and
+content reference. The existing serializer reports missing required fields
+and incompatible values. A file that causes a serialization error fails the
+containing payload. Callers must handle that error rather than apply a partial
+snapshot.
+
+Each SDK keeps its native validation rules. Go can use zero values for missing
+fields. TypeScript types do not perform runtime validation.
+
+Runtime model decoders accept unknown keys but do not retain them on recognized
+objects. Keep the original raw payload separately if forwarding must be
+lossless. Intentional extension fields and unknown variants keep their existing
+raw-data behavior.
+
+The statistics count items, such as text lines or notebook cells. They are not
+patch data. `ContentRef` retains its existing URI, size hint, content type, and
+nonce. This API change does not add diff computation or a new resource protocol.
 
 ### File Review
 
@@ -213,19 +274,22 @@ a JSON-RPC error.
 
 ## Lifecycle
 
-1. The server publishes the catalogue on `SessionState.changesets`.
-   Updates ride on the `session/changesetsChanged` action.
+1. The server publishes a catalogue on `SessionState.changesets` and/or
+   `ChatState.changesets`. Updates ride on `session/changesetsChanged` or
+   `chat/changesetsChanged`, respectively.
 2. The client picks catalogue entries whose template variables it can
    satisfy and subscribes to the resulting URIs.
 3. The server returns a `ChangesetState` snapshot (`status: 'computing'`
-   is allowed if scanning is async) and can push `changeset/contentChanged`
-   for an initial batched file snapshot, optionally including operations or
-   error details, followed by narrower `changeset/*` actions as files or
-   operations change.
+   is allowed if the initial scan is async). For a later refresh, the server
+   transitions to `recomputing` and keeps the previous completed `files` until
+   the replacement is available. It can push `changeset/contentChanged` for a
+   batched file snapshot, optionally including operations or error details,
+   followed by narrower `changeset/*` actions as files or operations change.
 4. The user invokes a `ChangesetOperation`. The client calls
    `invokeChangesetOperation`. The server applies the operation and
    emits any resulting changeset updates.
-5. When a session ends, all of its changesets implicitly become
+5. When a chat ends, its chat-scoped changesets implicitly become
+   un-subscribable. When a session ends, all remaining changesets implicitly become
    un-subscribable. Existing subscriptions receive `changeset/cleared`
    and the server unsubscribes them.
 

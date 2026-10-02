@@ -72,6 +72,16 @@ private func refineToolCallContributor(_ current: ToolCallContributor?, _ next: 
     return next
 }
 
+/// Extracts the stable `id` of background work, including kinds from newer hosts.
+private func backgroundWorkID(_ w: BackgroundWork) -> String? {
+    switch w {
+    case .shell(let x): return x.id
+    case .subagent(let x): return x.id
+    // Kinds from newer hosts still carry the common `id`, so they can be replaced and removed.
+    case .unknown(let raw): return (raw.value as? [String: Any])?["id"] as? String
+    }
+}
+
 /// Extracts the stable `id` of a session input request, or `nil` for unknown variants.
 private func sessionInputRequestID(_ r: SessionInputRequest) -> String? {
     switch r {
@@ -202,6 +212,39 @@ public func chatReducer(state: ChatState, action: StateAction) -> ChatState {
     case .chatActivityChanged(let a):
         var next = state
         next.activity = a.activity
+        return next
+
+    case .chatBackgroundWorkSet(let a):
+        guard let id = backgroundWorkID(a.work) else { return state }
+        var next = state
+        var work = state.backgroundWork ?? []
+        if let idx = work.firstIndex(where: { backgroundWorkID($0) == id }) {
+            work[idx] = a.work
+        } else {
+            work.append(a.work)
+        }
+        next.backgroundWork = work
+        return next
+
+    case .chatBackgroundWorkRemoved(let a):
+        guard let idx = state.backgroundWork?.firstIndex(where: { backgroundWorkID($0) == a.id }) else { return state }
+        var next = state
+        next.backgroundWork?.remove(at: idx)
+        return next
+
+    case .chatMovableChanged(let a):
+        var next = state
+        next.movable = a.movable
+        return next
+
+    case .chatChangesetsChanged(let a):
+        var next = state
+        next.changesets = a.changesets
+        return next
+
+    case .chatCanvasesChanged(let a):
+        var next = state
+        next.canvases = a.canvases
         return next
 
     case .chatWorkingDirectorySet(let a):
@@ -676,6 +719,16 @@ public func chatReducer(state: ChatState, action: StateAction) -> ChatState {
         next.draft = a.draft
         return next
 
+    case .chatIsReadChanged(let a):
+        var next = state
+        next.status = withStatusFlag(next.status, .isRead, a.isRead)
+        return next
+
+    case .chatIsArchivedChanged(let a):
+        var next = state
+        next.status = withStatusFlag(next.status, .isArchived, a.isArchived)
+        return next
+
     default:
         return state
     }
@@ -731,6 +784,20 @@ public func sessionReducer(state: SessionState, action: StateAction) -> SessionS
     case .sessionDefaultChatChanged(let a):
         var next = state
         next.defaultChat = a.defaultChat
+        return next
+
+    case .sessionChatsReordered(let a):
+        guard a.chats.count == state.chats.count, Set(a.chats).count == state.chats.count else {
+            return state
+        }
+        let reordered = a.chats.compactMap { resource in
+            state.chats.first { $0.resource == resource }
+        }
+        guard reordered.count == state.chats.count else {
+            return state
+        }
+        var next = state
+        next.chats = reordered
         return next
 
     // ── Metadata ──────────────────────────────────────────────────────────
@@ -900,6 +967,18 @@ public func sessionReducer(state: SessionState, action: StateAction) -> SessionS
             channel: nil
         )
 
+    case .sessionMcpServerBackgroundRequested(let a):
+        guard let entry = findMcpServerCustomization(state, id: a.id),
+              case .starting(var starting) = entry.state,
+              starting.blocking == true else { return state }
+        starting.blocking = false
+        return updateMcpServerCustomizationState(
+            state,
+            id: a.id,
+            state: .starting(starting),
+            channel: entry.channel
+        )
+
     case .sessionMcpServerStopRequested(let a):
         return updateMcpServerCustomizationState(
             state,
@@ -928,11 +1007,14 @@ public let clientDispatchableActions: Set<String> = [
     "chat/pendingMessageSet",
     "chat/pendingMessageRemoved",
     "chat/queuedMessagesReordered",
+    "chat/isReadChanged",
+    "chat/isArchivedChanged",
     "chat/inputAnswerChanged",
     "chat/inputCompleted",
     "session/customizationToggled",
     "session/mcpServerStartRequested",
     "session/mcpServerStopRequested",
+    "session/mcpServerBackgroundRequested",
     "session/isReadChanged",
     "session/isArchivedChanged",
     "automationRun/cancelRequested",
@@ -948,9 +1030,11 @@ public func isClientDispatchable(_ action: StateAction) -> Bool {
          .sessionActiveClientRemoved,
          .chatPendingMessageSet,
          .chatPendingMessageRemoved, .chatQueuedMessagesReordered,
+         .chatIsReadChanged, .chatIsArchivedChanged,
          .chatInputAnswerChanged, .chatInputCompleted,
          .sessionCustomizationToggled,
          .sessionMcpServerStartRequested, .sessionMcpServerStopRequested,
+         .sessionMcpServerBackgroundRequested,
          .sessionIsReadChanged,
          .sessionIsArchivedChanged,
          .automationRunCancelRequested:
@@ -970,6 +1054,24 @@ private func addMillisecondsToTimestamp(_ timestamp: String, _ duration: Int) ->
     return iso8601TimestampFormatter.string(
         from: start.addingTimeInterval(Double(duration) / 1_000)
     )
+}
+
+/// Locates the `McpServerCustomization` with `id`, searching the top-level
+/// list first and then every container's children, using the same lookup
+/// rules as `updateMcpServerCustomizationState`.
+private func findMcpServerCustomization(_ state: SessionState, id: String) -> McpServerCustomization? {
+    guard let list = state.customizations else { return nil }
+    if let top = list.first(where: { customizationId($0) == id }) {
+        guard case .mcpServer(let entry) = top else { return nil }
+        return entry
+    }
+    for container in list {
+        guard let children = customizationChildren(container),
+              let child = children.first(where: { childId($0) == id }),
+              case .mcpServer(let entry) = child else { continue }
+        return entry
+    }
+    return nil
 }
 
 private func updateMcpServerCustomizationState(
@@ -1010,6 +1112,7 @@ private func mergeChatSummaryChanges(_ summary: inout ChatSummary, changes: Part
     if let status = changes.status { summary.status = status }
     if let activity = changes.activity { summary.activity = activity }
     if let modifiedAt = changes.modifiedAt { summary.modifiedAt = modifiedAt }
+    if let changesSummary = changes.changes { summary.changes = changesSummary }
     if let origin = changes.origin { summary.origin = origin }
     if let workingDirectories = changes.workingDirectories { summary.workingDirectories = workingDirectories }
 }
@@ -1212,6 +1315,14 @@ private func updateResponsePart(
     var next = state
     next.activeTurn = activeTurn
     return next
+}
+
+/// Pure reducer for live canvas state.
+public func canvasReducer(state: CanvasState, action: StateAction) -> CanvasState {
+    guard case .canvasStateChanged(let a) = action else {
+        return state
+    }
+    return a.canvas
 }
 
 // MARK: - Terminal Reducer

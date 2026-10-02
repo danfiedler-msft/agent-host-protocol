@@ -92,6 +92,7 @@ data class SessionSummaryChangedParams(
      *
      * Identity fields (`resource`, `provider`, `createdAt`) never change and
      * MUST be omitted by senders; receivers SHOULD ignore them if present.
+     * When `chats` is present, it replaces the complete compact chat catalog.
      */
     val changes: PartialSessionSummary
 )
@@ -258,5 +259,13 @@ data class PartialSessionSummary(
      * and session notifications.
      */
     @SerialName("_meta")
-    val meta: Map<String, JsonElement>? = null
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Lightweight host-authoritative ordered chat catalog.
+     */
+    val chats: List<SessionChatSummary>? = null,
+    /**
+     * Chat that receives input when none is selected, independent of catalog position.
+     */
+    val defaultChat: String? = null
 )

@@ -75,6 +75,7 @@ public struct SessionSummaryChangedParams: Codable, Sendable {
     ///
     /// Identity fields (`resource`, `provider`, `createdAt`) never change and
     /// MUST be omitted by senders; receivers SHOULD ignore them if present.
+    /// When `chats` is present, it replaces the complete compact chat catalog.
     public var changes: PartialSessionSummary
 
     public init(
@@ -238,6 +239,10 @@ public struct PartialSessionSummary: Codable, Sendable {
     /// SHOULD keep the payload small because summaries appear in session lists
     /// and session notifications.
     public var meta: [String: AnyCodable]?
+    /// Lightweight host-authoritative ordered chat catalog.
+    public var chats: [SessionChatSummary]?
+    /// Chat that receives input when none is selected, independent of catalog position.
+    public var defaultChat: String?
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -253,6 +258,8 @@ public struct PartialSessionSummary: Codable, Sendable {
         case modifiedAt
         case changes
         case meta = "_meta"
+        case chats
+        case defaultChat
     }
 
     public init(
@@ -268,7 +275,9 @@ public struct PartialSessionSummary: Codable, Sendable {
         createdAt: String? = nil,
         modifiedAt: String? = nil,
         changes: ChangesSummary? = nil,
-        meta: [String: AnyCodable]? = nil
+        meta: [String: AnyCodable]? = nil,
+        chats: [SessionChatSummary]? = nil,
+        defaultChat: String? = nil
     ) {
         self.provider = provider
         self.title = title
@@ -283,5 +292,7 @@ public struct PartialSessionSummary: Codable, Sendable {
         self.modifiedAt = modifiedAt
         self.changes = changes
         self.meta = meta
+        self.chats = chats
+        self.defaultChat = defaultChat
     }
 }

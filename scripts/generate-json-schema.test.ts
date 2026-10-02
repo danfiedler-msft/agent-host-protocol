@@ -97,21 +97,31 @@ function schemaAccepts(
 
   const schema = dereferenceSchema(root, node as Record<string, unknown>);
   const oneOf = schema.oneOf;
-  if (Array.isArray(oneOf)) {
-    return oneOf.filter(branch => schemaAccepts(root, branch as JsonNode, value)).length === 1;
+  if (Array.isArray(oneOf) &&
+      oneOf.filter(branch => schemaAccepts(root, branch as JsonNode, value)).length !== 1) {
+    return false;
   }
 
   const allOf = schema.allOf;
-  if (Array.isArray(allOf)) {
-    return allOf.every(branch => schemaAccepts(root, branch as JsonNode, value));
+  if (Array.isArray(allOf) &&
+      !allOf.every(branch => schemaAccepts(root, branch as JsonNode, value))) {
+    return false;
   }
 
-  if (schema.not) {
-    return !schemaAccepts(root, schema.not as JsonNode, value);
+  if (schema.not && schemaAccepts(root, schema.not as JsonNode, value)) {
+    return false;
   }
 
   if ('const' in schema) {
     return value === schema.const;
+  }
+
+  if (schema.contains && Array.isArray(value)) {
+    const matches = value.filter(item => schemaAccepts(root, schema.contains as JsonNode, item)).length;
+    const minimum = typeof schema.minContains === 'number' ? schema.minContains : 1;
+    if (matches < minimum || (typeof schema.maxContains === 'number' && matches > schema.maxContains)) {
+      return false;
+    }
   }
 
   if (schema.type === 'object' || schema.required || schema.properties) {
@@ -136,13 +146,17 @@ function schemaAccepts(
     case 'string':
       return typeof value === 'string';
     case 'number':
-      return typeof value === 'number';
+    case 'integer':
+      return typeof value === 'number' &&
+        (schema.type !== 'integer' || Number.isInteger(value)) &&
+        (typeof schema.minimum !== 'number' || value >= schema.minimum);
     case 'boolean':
       return typeof value === 'boolean';
     case 'null':
       return value === null;
     case 'array':
-      return Array.isArray(value);
+      return Array.isArray(value) &&
+        (!schema.items || value.every(item => schemaAccepts(root, schema.items as JsonNode, item)));
   }
 
   return true;
@@ -198,6 +212,81 @@ describe('generated JSON schemas', () => {
         assert.equal(required.includes('expiresIn'), false);
         assert.match(expiresIn.description as string, /remaining lifetime, in seconds/);
         assert.match(expiresIn.description as string, /MUST be a positive integer/);
+      });
+
+      it('accepts optional, empty, single-kind, and combined automation disable conditions', () => {
+        const defs = schema.$defs as Record<string, Record<string, unknown>>;
+        const afterRuns = { kind: 'afterRuns', max: 3 };
+        const afterDate = { kind: 'afterDate', date: '2026-10-01T00:00:00Z' };
+        const definition = {
+          title: 'Triage',
+          message: { text: 'go', origin: { kind: 'automation' } },
+          session: {},
+          enabled: false,
+          triggers: [],
+        };
+        for (const type of ['AutomationDefinition', 'AutomationDefinitionPatch']) {
+          const target = defs[type];
+          if (!target) continue;
+          const base = type === 'AutomationDefinition' ? definition : {};
+          assert.equal(schemaAccepts(schema, target as JsonNode, base), true, `${type}: absent`);
+          for (const conditions of [[], [afterRuns], [afterDate], [afterRuns, afterDate], [afterDate, afterRuns]]) {
+            assert.equal(schemaAccepts(schema, target as JsonNode, {
+              ...base,
+              disableConditions: conditions,
+            }), true, `${type}: ${JSON.stringify(conditions)}`);
+          }
+        }
+      });
+
+      it('rejects duplicate disable-condition kinds, including different values of the same kind', () => {
+        const defs = schema.$defs as Record<string, Record<string, unknown>>;
+        const afterRuns = { kind: 'afterRuns', max: 3 };
+        const afterDate = { kind: 'afterDate', date: '2026-10-01T00:00:00Z' };
+        const duplicateConditions = [
+          [afterRuns, afterRuns],
+          [afterRuns, { kind: 'afterRuns', max: 5 }],
+          [afterDate, afterDate],
+          [afterDate, { kind: 'afterDate', date: '2026-11-01T00:00:00Z' }],
+          [afterRuns, afterDate, afterRuns],
+          [afterDate, afterRuns, afterDate],
+        ];
+        for (const type of ['AutomationDefinition', 'AutomationDefinitionPatch']) {
+          const target = defs[type];
+          if (!target) continue;
+          const properties = target.properties as Record<string, JsonNode>;
+          const conditions = properties.disableConditions;
+          assert.ok(conditions, `${type} declares disableConditions`);
+          for (const value of duplicateConditions) {
+            assert.equal(schemaAccepts(schema, conditions, value), false, `${type}: ${JSON.stringify(value)}`);
+          }
+        }
+      });
+
+      it('rejects malformed disable-condition arrays and invalid run caps', () => {
+        const defs = schema.$defs as Record<string, Record<string, unknown>>;
+        for (const type of ['AutomationDefinition', 'AutomationDefinitionPatch']) {
+          const target = defs[type];
+          if (!target) continue;
+          const properties = target.properties as Record<string, JsonNode>;
+          for (const value of [
+            null,
+            { kind: 'afterRuns', max: 3 },
+            [null],
+            [{ kind: 'unknown' }],
+            [{ kind: 'afterRuns' }],
+            [{ kind: 'afterDate' }],
+            [{ kind: 'afterRuns', max: 0 }],
+            [{ kind: 'afterRuns', max: -1 }],
+            [{ kind: 'afterRuns', max: 1.5 }],
+            [{ kind: 'maxRuns', maxRuns: 3 }],
+            [{ kind: 'finalDate', finalDate: '2026-10-01T00:00:00Z' }],
+            [{ kind: 'afterRuns', maxRuns: 3 }],
+            [{ kind: 'afterDate', finalDate: '2026-10-01T00:00:00Z' }],
+          ]) {
+            assert.equal(schemaAccepts(schema, properties.disableConditions, value), false, `${type}: ${JSON.stringify(value)}`);
+          }
+        }
       });
 
       it('constrains every ChatOrigin branch to a distinct kind', () => {
@@ -294,6 +383,97 @@ describe('generated JSON schemas', () => {
           false,
         );
       });
+
+      it('constrains stable chat move destinations and results', () => {
+        if (file !== 'commands.schema.json') {
+          return;
+        }
+
+        const defs = schema.$defs as Record<string, Record<string, unknown>>;
+        const destination = defs.ChatMoveDestination;
+        assert.ok(destination, 'ChatMoveDestination must be emitted as a command definition');
+        assert.equal(
+          schemaAccepts(schema, destination, {
+            kind: 'session',
+            session: 'ahp-session:/destination',
+            after: 'ahp-chat:/anchor',
+          }),
+          true,
+        );
+        assert.equal(
+          schemaAccepts(schema, destination, {
+            kind: 'newSession',
+          }),
+          true,
+        );
+        assert.equal(
+          schemaAccepts(schema, destination, {
+            kind: 'session',
+          }),
+          false,
+        );
+        assert.equal(
+          schemaAccepts(schema, destination, {
+            kind: 'unknown',
+          }),
+          false,
+        );
+
+        assert.deepEqual(defs.MoveChatParams.required, ['channel', 'destination']);
+        assert.equal(
+          Object.hasOwn(defs.MoveChatParams.properties as object, 'requestId'),
+          false,
+        );
+        assert.deepEqual(defs.MoveChatResult.required, ['session']);
+        assert.deepEqual(
+          Object.keys(defs.MoveChatResult.properties as object),
+          ['session'],
+        );
+      });
+
+      it('exposes optional host-authoritative chat movability and its update action', () => {
+        if (file !== 'state.schema.json' && file !== 'actions.schema.json') {
+          return;
+        }
+
+        const defs = schema.$defs as Record<string, Record<string, unknown>>;
+        for (const name of ['ChatState', 'ChatSummary']) {
+          const definition = defs[name];
+          assert.ok(definition, `${name} must be emitted`);
+          const properties = definition.properties as Record<string, Record<string, unknown>>;
+          assert.equal(properties.movable.type, 'boolean');
+          assert.equal(
+            (definition.required as string[]).includes('movable'),
+            false,
+            `${name}.movable must remain optional so absence means false`,
+          );
+        }
+
+        if (file === 'actions.schema.json') {
+          const action = defs.ChatMovableChangedAction;
+          assert.ok(action, 'ChatMovableChangedAction must be emitted');
+          assert.deepEqual(action.required, ['type', 'movable']);
+          const properties = action.properties as Record<string, Record<string, unknown>>;
+          assert.equal(properties.type.const, 'chat/movableChanged');
+          assert.equal(properties.movable.type, 'boolean');
+        }
+      });
+
+      it('carries the complete authoritative session chat order', () => {
+        if (file !== 'actions.schema.json') {
+          return;
+        }
+
+        const defs = schema.$defs as Record<string, Record<string, unknown>>;
+        const action = defs.SessionChatsReorderedAction;
+        assert.ok(action, 'SessionChatsReorderedAction must be emitted');
+        assert.deepEqual(action.required, ['type', 'chats']);
+        const properties = action.properties as Record<string, Record<string, unknown>>;
+        assert.equal(properties.chats.type, 'array');
+        assert.deepEqual(properties.chats.items, { $ref: '#/$defs/URI' });
+        assert.equal(Object.hasOwn(properties, 'destination'), false);
+      });
+
     });
   }
 });

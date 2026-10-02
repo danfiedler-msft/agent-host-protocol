@@ -760,6 +760,38 @@ public enum TerminalLifecycleStatus: String, Codable, Sendable {
     case exited = "exited"
 }
 
+/// Kind of {@link BackgroundWork}.
+///
+/// This is a general/typological union (not a lifecycle), so the discriminant is
+/// a `*Kind`.
+public enum BackgroundWorkKind: Codable, Sendable, Equatable {
+    /// A shell command that continues after its initiating tool call returns.
+    case shell
+    /// A subagent running in the background.
+    case subagent
+    /// Unknown raw value from a newer protocol version, preserved verbatim.
+    case unknown(String)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        switch raw {
+        case "shell": self = .shell
+        case "subagent": self = .subagent
+        default: self = .unknown(raw)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .shell: try container.encode("shell")
+        case .subagent: try container.encode("subagent")
+        case .unknown(let raw): try container.encode(raw)
+        }
+    }
+}
+
 /// Discriminant for the {@link McpServerState} union.
 public enum McpServerStatus: Codable, Sendable, Equatable {
     /// Server has been registered but is not yet running.
@@ -857,8 +889,12 @@ public enum McpAuthRequiredReason: Codable, Sendable, Equatable {
 
 /// Computation lifecycle of a {@link ChangesetState}.
 public enum ChangesetStatus: Codable, Sendable, Equatable {
-    /// The server is still computing the contents of this changeset.
+    /// The server is computing this changeset for the first time.
     case computing
+    /// The server is recomputing this changeset. {@link ChangesetState.files}
+    /// remains the previous completed result while recomputation is in progress,
+    /// including when that result is an empty array.
+    case recomputing
     /// The changeset has been fully computed and is up-to-date.
     case ready
     /// Computation failed. The cause is described by
@@ -872,6 +908,7 @@ public enum ChangesetStatus: Codable, Sendable, Equatable {
         let raw = try container.decode(String.self)
         switch raw {
         case "computing": self = .computing
+        case "recomputing": self = .recomputing
         case "ready": self = .ready
         case "error": self = .error
         default: self = .unknown(raw)
@@ -882,6 +919,7 @@ public enum ChangesetStatus: Codable, Sendable, Equatable {
         var container = encoder.singleValueContainer()
         switch self {
         case .computing: try container.encode("computing")
+        case .recomputing: try container.encode("recomputing")
         case .ready: try container.encode("ready")
         case .error: try container.encode("error")
         case .unknown(let raw): try container.encode(raw)
@@ -1073,6 +1111,14 @@ public enum AutomationTriggerKind: String, Codable, Sendable {
     case schedule = "schedule"
     /// A host-defined external event discovered from trigger definitions.
     case event = "event"
+}
+
+/// Discriminant for an {@link AutomationDisableCondition}.
+public enum AutomationDisableConditionKind: String, Codable, Sendable {
+    /// Stop scheduling after a fixed number of scheduled runs.
+    case afterRuns = "afterRuns"
+    /// Stop scheduling once a wall-clock date passes.
+    case afterDate = "afterDate"
 }
 
 /// Lifecycle status of one automation run.
@@ -1325,7 +1371,8 @@ public struct AgentCapabilities: Codable, Sendable {
     /// clients MUST NOT call `createChat` to open chats beyond the default one the
     /// session starts with. An empty object `{}` advertises multi-chat without
     /// source-based creation; set {@link MultipleChatsCapability.fork} or
-    /// {@link MultipleChatsCapability.sideChat} to allow the corresponding mode.
+    /// {@link MultipleChatsCapability.sideChat} to allow the corresponding
+    /// creation mode.
     public var multipleChats: MultipleChatsCapability?
     /// The session's agent can be granted tool access to more than one working
     /// directory. The directories are treated as equal peers except where the
@@ -1523,6 +1570,10 @@ public final class ConfigPropertySchema: Codable, @unchecked Sendable {
     public var readOnly: Bool?
     /// JSON Schema: schema for array items (used when `type` is `'array'`)
     public var items: ConfigPropertySchema?
+    /// JSON Schema: minimum number of array items (used when `type` is `'array'`)
+    public var minItems: Int?
+    /// JSON Schema: maximum number of array items (used when `type` is `'array'`)
+    public var maxItems: Int?
     /// JSON Schema: property descriptors for object properties (used when `type` is `'object'`)
     public var properties: [String: ConfigPropertySchema]?
     /// JSON Schema: list of required property ids (used when `type` is `'object'`)
@@ -1540,6 +1591,8 @@ public final class ConfigPropertySchema: Codable, @unchecked Sendable {
         case enumDescriptions
         case readOnly
         case items
+        case minItems
+        case maxItems
         case properties
         case required
         case additionalProperties
@@ -1555,6 +1608,8 @@ public final class ConfigPropertySchema: Codable, @unchecked Sendable {
         enumDescriptions: [String]? = nil,
         readOnly: Bool? = nil,
         items: ConfigPropertySchema? = nil,
+        minItems: Int? = nil,
+        maxItems: Int? = nil,
         properties: [String: ConfigPropertySchema]? = nil,
         required: [String]? = nil,
         additionalProperties: ConfigPropertySchema? = nil
@@ -1568,6 +1623,8 @@ public final class ConfigPropertySchema: Codable, @unchecked Sendable {
         self.enumDescriptions = enumDescriptions
         self.readOnly = readOnly
         self.items = items
+        self.minItems = minItems
+        self.maxItems = maxItems
         self.properties = properties
         self.required = required
         self.additionalProperties = additionalProperties
@@ -1619,8 +1676,19 @@ public struct ChatState: Codable, Sendable {
     public var activity: String?
     /// Last modification timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
     public var modifiedAt: String
+    /// Aggregate summary of file changes associated with this chat. Servers may
+    /// populate this to give clients a quick at-a-glance view of the chat's
+    /// footprint without requiring the client to subscribe to a changeset.
+    public var changes: ChangesSummary?
     /// How this chat came into existence
     public var origin: ChatOrigin?
+    /// Whether this chat is eligible to be the source of `moveChat`, including
+    /// same-session ordering.
+    ///
+    /// The host is authoritative. Absence means `false`. A `true` value does not
+    /// guarantee that a particular request will succeed. A chat referenced by its
+    /// owning session's `defaultChat` MUST NOT be movable.
+    public var movable: Bool?
     /// How the user can interact with this chat. See {@link ChatInteractivity}.
     ///
     /// Supports agent-team patterns where worker chats are read-only or hidden.
@@ -1639,6 +1707,30 @@ public struct ChatState: Codable, Sendable {
     /// Dispatch `chat/workingDirectorySet` / `chat/workingDirectoryRemoved` to
     /// update the subset on a running chat.
     public var workingDirectories: [String]?
+    /// Catalogue of changesets the server can produce for this chat. Each entry
+    /// advertises a subscribable view of file changes scoped to the chat's
+    /// effective working directories and the URI template the client expands
+    /// before subscribing. See {@link Changeset} for the full shape and
+    /// {@link /guide/changesets | Changesets} for an overview of the model.
+    ///
+    /// This catalogue is intentionally absent from {@link ChatSummary}; clients
+    /// obtain it by subscribing to the chat channel.
+    public var changesets: [Changeset]?
+    /// Work running in the background for this chat, such as shells and
+    /// subagents. Only active work is listed: hosts remove an entry once the work
+    /// ends. An entry may have been started by an earlier turn rather than the
+    /// {@link ChatState.activeTurn | activeTurn}.
+    ///
+    /// Like {@link ChatState.changesets | changesets}, this is intentionally
+    /// absent from {@link ChatSummary}; clients obtain it by subscribing to the
+    /// chat channel.
+    public var backgroundWork: [BackgroundWork]?
+    /// Live canvases currently exposed by this chat.
+    ///
+    /// Entries intentionally contain only subscribable channel references.
+    /// Clients subscribe to each resource for the experimental presentation
+    /// state, including its current live source URL.
+    public var canvases: [CanvasReference]?
     /// Completed turns
     public var turns: [Turn]
     /// Cursor for loading older completed turns into this chat state.
@@ -1675,9 +1767,14 @@ public struct ChatState: Codable, Sendable {
         case status
         case activity
         case modifiedAt
+        case changes
         case origin
+        case movable
         case interactivity
         case workingDirectories
+        case changesets
+        case backgroundWork
+        case canvases
         case turns
         case turnsNextCursor
         case activeTurn
@@ -1693,9 +1790,14 @@ public struct ChatState: Codable, Sendable {
         status: SessionStatus,
         activity: String? = nil,
         modifiedAt: String,
+        changes: ChangesSummary? = nil,
         origin: ChatOrigin? = nil,
+        movable: Bool? = nil,
         interactivity: ChatInteractivity? = nil,
         workingDirectories: [String]? = nil,
+        changesets: [Changeset]? = nil,
+        backgroundWork: [BackgroundWork]? = nil,
+        canvases: [CanvasReference]? = nil,
         turns: [Turn],
         turnsNextCursor: String? = nil,
         activeTurn: ActiveTurn? = nil,
@@ -1709,9 +1811,14 @@ public struct ChatState: Codable, Sendable {
         self.status = status
         self.activity = activity
         self.modifiedAt = modifiedAt
+        self.changes = changes
         self.origin = origin
+        self.movable = movable
         self.interactivity = interactivity
         self.workingDirectories = workingDirectories
+        self.changesets = changesets
+        self.backgroundWork = backgroundWork
+        self.canvases = canvases
         self.turns = turns
         self.turnsNextCursor = turnsNextCursor
         self.activeTurn = activeTurn
@@ -1733,8 +1840,17 @@ public struct ChatSummary: Codable, Sendable {
     public var activity: String?
     /// Last modification timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
     public var modifiedAt: String
+    /// Aggregate summary of file changes associated with this chat. Servers may
+    /// populate this to give clients a quick at-a-glance view of the chat's
+    /// footprint without requiring the client to subscribe to a changeset.
+    public var changes: ChangesSummary?
     /// How this chat came into existence
     public var origin: ChatOrigin?
+    /// Whether this chat is structurally eligible to be the source of
+    /// `moveChat`. Absence means `false`.
+    ///
+    /// See {@link ChatState.movable} for the full semantics.
+    public var movable: Bool?
     /// How the user can interact with this chat. See {@link ChatInteractivity}.
     ///
     /// Supports agent-team patterns where worker chats are read-only or hidden.
@@ -1751,7 +1867,9 @@ public struct ChatSummary: Codable, Sendable {
         status: SessionStatus,
         activity: String? = nil,
         modifiedAt: String,
+        changes: ChangesSummary? = nil,
         origin: ChatOrigin? = nil,
+        movable: Bool? = nil,
         interactivity: ChatInteractivity? = nil,
         workingDirectories: [String]? = nil
     ) {
@@ -1760,7 +1878,9 @@ public struct ChatSummary: Codable, Sendable {
         self.status = status
         self.activity = activity
         self.modifiedAt = modifiedAt
+        self.changes = changes
         self.origin = origin
+        self.movable = movable
         self.interactivity = interactivity
         self.workingDirectories = workingDirectories
     }
@@ -1833,11 +1953,13 @@ public struct SessionState: Codable, Sendable {
     /// reconnecting in time, or reconnect without resubscribing to the session.
     public var activeClients: [SessionActiveClient]
     /// Catalog of chats in this session.
+    ///
+    /// Order is host-authoritative and durable. Catalog order is independent of
+    /// `defaultChat`.
     public var chats: [ChatSummary]
     /// The chat that receives input when the user addresses the session without
-    /// selecting a specific chat. This is a UI routing hint, not a hierarchy
-    /// marker — chats remain equal peers at the protocol level. Hosts MAY change
-    /// this over the session's lifetime.
+    /// selecting a specific chat. This routing designation does not determine the
+    /// chat's catalog position. Hosts MAY change it over the session's lifetime.
     public var defaultChat: String?
     /// Session configuration schema and current values
     public var config: SessionConfigState?
@@ -1982,6 +2104,101 @@ public struct SessionActiveClient: Codable, Sendable {
         self.displayName = displayName
         self.tools = tools
         self.customizations = customizations
+    }
+}
+
+public struct BackgroundShellWork: Codable, Sendable {
+    /// Identifier of this entry, unique within the owning chat across all kinds.
+    /// The host derives it however it likes (for example from the kind plus the
+    /// agent's own task id); consumers MUST treat it as opaque. It is the key for
+    /// the `chat/backgroundWorkSet` / `chat/backgroundWorkRemoved` upsert
+    /// convention.
+    public var id: String
+    /// Human-readable label, such as the command's purpose or the subagent's name.
+    public var label: String
+    /// ISO 8601 timestamp when the work started.
+    public var startedAt: String
+    /// Provider-specific metadata.
+    public var meta: [String: AnyCodable]?
+    public var kind: BackgroundWorkKind
+    /// Command line, displayed as plain text.
+    public var command: String
+    /// Terminal carrying this shell's output. Hosts SHOULD set this whenever they
+    /// can show that output. Clients open it like
+    /// {@link ToolResultTerminalContent.resource}; `isPty` on its
+    /// {@link TerminalState} says whether the output is plain text.
+    public var terminal: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case startedAt
+        case meta = "_meta"
+        case kind
+        case command
+        case terminal
+    }
+
+    public init(
+        id: String,
+        label: String,
+        startedAt: String,
+        meta: [String: AnyCodable]? = nil,
+        kind: BackgroundWorkKind,
+        command: String,
+        terminal: String? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.startedAt = startedAt
+        self.meta = meta
+        self.kind = kind
+        self.command = command
+        self.terminal = terminal
+    }
+}
+
+public struct BackgroundSubagentWork: Codable, Sendable {
+    /// Identifier of this entry, unique within the owning chat across all kinds.
+    /// The host derives it however it likes (for example from the kind plus the
+    /// agent's own task id); consumers MUST treat it as opaque. It is the key for
+    /// the `chat/backgroundWorkSet` / `chat/backgroundWorkRemoved` upsert
+    /// convention.
+    public var id: String
+    /// Human-readable label, such as the command's purpose or the subagent's name.
+    public var label: String
+    /// ISO 8601 timestamp when the work started.
+    public var startedAt: String
+    /// Provider-specific metadata.
+    public var meta: [String: AnyCodable]?
+    public var kind: BackgroundWorkKind
+    /// The subagent's chat: the same chat the spawning tool call's
+    /// {@link ToolResultSubagentContent.resource} points to.
+    public var chat: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case startedAt
+        case meta = "_meta"
+        case kind
+        case chat
+    }
+
+    public init(
+        id: String,
+        label: String,
+        startedAt: String,
+        meta: [String: AnyCodable]? = nil,
+        kind: BackgroundWorkKind,
+        chat: String
+    ) {
+        self.id = id
+        self.label = label
+        self.startedAt = startedAt
+        self.meta = meta
+        self.kind = kind
+        self.chat = chat
     }
 }
 
@@ -2160,6 +2377,10 @@ public struct SessionSummary: Codable, Sendable {
     /// SHOULD keep the payload small because summaries appear in session lists
     /// and session notifications.
     public var meta: [String: AnyCodable]?
+    /// Lightweight host-authoritative ordered chat catalog.
+    public var chats: [SessionChatSummary]?
+    /// Chat that receives input when none is selected, independent of catalog position.
+    public var defaultChat: String?
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -2175,6 +2396,8 @@ public struct SessionSummary: Codable, Sendable {
         case modifiedAt
         case changes
         case meta = "_meta"
+        case chats
+        case defaultChat
     }
 
     public init(
@@ -2190,7 +2413,9 @@ public struct SessionSummary: Codable, Sendable {
         createdAt: String,
         modifiedAt: String,
         changes: ChangesSummary? = nil,
-        meta: [String: AnyCodable]? = nil
+        meta: [String: AnyCodable]? = nil,
+        chats: [SessionChatSummary]? = nil,
+        defaultChat: String? = nil
     ) {
         self.provider = provider
         self.title = title
@@ -2205,6 +2430,54 @@ public struct SessionSummary: Codable, Sendable {
         self.modifiedAt = modifiedAt
         self.changes = changes
         self.meta = meta
+        self.chats = chats
+        self.defaultChat = defaultChat
+    }
+}
+
+public struct SessionChatSummary: Codable, Sendable {
+    /// Canonical chat URI
+    public var resource: String
+    /// Human-readable chat title
+    public var title: String
+    /// How this chat was created, when known
+    public var origin: ChatOrigin?
+    /// How the user can interact with this chat.
+    ///
+    /// Generic clients use this to omit hidden chats and disable input for
+    /// read-only chats. Absence defaults to {@link ChatInteractivity.Full} for
+    /// backward compatibility.
+    public var interactivity: ChatInteractivity?
+    /// Current chat status, matching {@link ChatSummary.status}.
+    ///
+    /// Includes the activity bits and the orthogonal {@link SessionStatus.IsRead}
+    /// and {@link SessionStatus.IsArchived} flags. Generic clients use these bits
+    /// to present read, unread, or archived chats in session lists without
+    /// subscribing to the session or chat channel. Absence means the host did
+    /// not provide the status; clients MUST treat it as unknown, not as unread
+    /// or unarchived.
+    public var status: SessionStatus?
+    /// Aggregate summary of file changes associated with this chat.
+    ///
+    /// Servers may populate this so session lists can show per-chat change
+    /// counts without subscribing to the session or chat channel. Updates travel
+    /// with the rest of the catalog in `root/sessionSummaryChanged`.
+    public var changes: ChangesSummary?
+
+    public init(
+        resource: String,
+        title: String,
+        origin: ChatOrigin? = nil,
+        interactivity: ChatInteractivity? = nil,
+        status: SessionStatus? = nil,
+        changes: ChangesSummary? = nil
+    ) {
+        self.resource = resource
+        self.title = title
+        self.origin = origin
+        self.interactivity = interactivity
+        self.status = status
+        self.changes = changes
     }
 }
 
@@ -3396,7 +3669,7 @@ public struct ToolCallPendingConfirmationState: Codable, Sendable {
     /// Risk assessment that informed the confirmation requirement.
     public var riskAssessment: ToolCallRiskAssessment?
     /// File edits that this tool call will perform, for preview before confirmation
-    public var edits: AnyCodable?
+    public var edits: FileEditCollection?
     /// Whether the agent host allows the client to edit the tool's input parameters before confirming
     public var editable: Bool?
     /// Options the server offers for this confirmation. When present, the client
@@ -3434,7 +3707,7 @@ public struct ToolCallPendingConfirmationState: Codable, Sendable {
         status: ToolCallStatus,
         confirmationTitle: StringOrMarkdown? = nil,
         riskAssessment: ToolCallRiskAssessment? = nil,
-        edits: AnyCodable? = nil,
+        edits: FileEditCollection? = nil,
         editable: Bool? = nil,
         options: [ConfirmationOption]? = nil
     ) {
@@ -4105,17 +4378,17 @@ public struct ToolResultResourceContent: Codable, Sendable {
 
 public struct ToolResultFileEditContent: Codable, Sendable {
     /// The file state before the edit. Absent for file creations or for in-place file edits.
-    public var before: AnyCodable?
+    public var before: FileEditSide?
     /// The file state after the edit. Absent for file deletions.
-    public var after: AnyCodable?
+    public var after: FileEditSide?
     /// Optional diff display metadata
-    public var diff: AnyCodable?
+    public var diff: FileEditDiffStats?
     public var type: ToolResultContentType
 
     public init(
-        before: AnyCodable? = nil,
-        after: AnyCodable? = nil,
-        diff: AnyCodable? = nil,
+        before: FileEditSide? = nil,
+        after: FileEditSide? = nil,
+        diff: FileEditDiffStats? = nil,
         type: ToolResultContentType
     ) {
         self.before = before
@@ -4127,7 +4400,7 @@ public struct ToolResultFileEditContent: Codable, Sendable {
 
 public struct ToolResultTerminalContent: Codable, Sendable {
     public var type: ToolResultContentType
-    /// Terminal URI (subscribable for full terminal state)
+    /// Terminal URI (subscribable for live or retained terminal state)
     public var resource: String
     /// Display title for the terminal content
     public var title: String
@@ -5133,11 +5406,22 @@ public struct AhpMcpUiHostCapabilities: Codable, Sendable {
 
 public struct McpServerStartingState: Codable, Sendable {
     public var kind: McpServerStatus
+    /// Hosts SHOULD set this to `true` when this server's startup will hold back
+    /// the processing of new messages (for example, the next turn) while the
+    /// server's contributions — such as its tools — are discovered.
+    ///
+    /// Clients MAY dispatch
+    /// {@link SessionMcpServerBackgroundRequestedAction | `session/mcpServerBackgroundRequested`}
+    /// through an appropriate affordance to ask the host to background the
+    /// startup.
+    public var blocking: Bool?
 
     public init(
-        kind: McpServerStatus
+        kind: McpServerStatus,
+        blocking: Bool? = nil
     ) {
         self.kind = kind
+        self.blocking = blocking
     }
 }
 
@@ -5296,22 +5580,62 @@ public struct ToolCallMcpContributor: Codable, Sendable {
     }
 }
 
-public struct FileEdit: Codable, Sendable {
-    /// The file state before the edit. Absent for file creations or for in-place file edits.
-    public var before: AnyCodable?
-    /// The file state after the edit. Absent for file deletions.
-    public var after: AnyCodable?
-    /// Optional diff display metadata
-    public var diff: AnyCodable?
+public struct FileEditSide: Codable, Sendable {
+    /// URI of the file on this side of the edit
+    public var uri: String
+    /// Reference to the file content on this side of the edit
+    public var content: ContentRef
 
     public init(
-        before: AnyCodable? = nil,
-        after: AnyCodable? = nil,
-        diff: AnyCodable? = nil
+        uri: String,
+        content: ContentRef
+    ) {
+        self.uri = uri
+        self.content = content
+    }
+}
+
+public struct FileEditDiffStats: Codable, Sendable {
+    /// Number of items added (e.g., lines for text files, cells for notebooks)
+    public var added: Int?
+    /// Number of items removed (e.g., lines for text files, cells for notebooks)
+    public var removed: Int?
+
+    public init(
+        added: Int? = nil,
+        removed: Int? = nil
+    ) {
+        self.added = added
+        self.removed = removed
+    }
+}
+
+public struct FileEdit: Codable, Sendable {
+    /// The file state before the edit. Absent for file creations or for in-place file edits.
+    public var before: FileEditSide?
+    /// The file state after the edit. Absent for file deletions.
+    public var after: FileEditSide?
+    /// Optional diff display metadata
+    public var diff: FileEditDiffStats?
+
+    public init(
+        before: FileEditSide? = nil,
+        after: FileEditSide? = nil,
+        diff: FileEditDiffStats? = nil
     ) {
         self.before = before
         self.after = after
         self.diff = diff
+    }
+}
+
+public struct FileEditCollection: Codable, Sendable {
+    public var items: [FileEdit]
+
+    public init(
+        items: [FileEdit]
+    ) {
+        self.items = items
     }
 }
 
@@ -5604,7 +5928,7 @@ public struct ErrorInfo: Codable, Sendable {
 }
 
 public struct Snapshot: Codable, Sendable {
-    /// The subscribed channel URI (e.g. `ahp-root://`, `ahp-session:/<uuid>`, or `ahp-chat:/<uuid>`)
+    /// The subscribed channel URI (e.g. `ahp-root://`, `ahp-session:/<uuid>`, `ahp-chat:/<uuid>`, or `ahp-canvas:/<uuid>`)
     public var resource: String
     /// The current state of the resource
     public var state: SnapshotState
@@ -5622,6 +5946,56 @@ public struct Snapshot: Codable, Sendable {
     }
 }
 
+public struct CanvasReference: Codable, Sendable {
+    /// Canvas channel URI. Subscribe to this resource for the full state.
+    public var resource: String
+
+    public init(
+        resource: String
+    ) {
+        self.resource = resource
+    }
+}
+
+public struct CanvasState: Codable, Sendable {
+    /// Stable caller-supplied instance identifier.
+    public var instanceId: String
+    /// Owning extension/provider identifier.
+    public var extensionId: String
+    /// Owning extension display name, when available.
+    public var extensionName: String?
+    /// Provider-local canvas type identifier.
+    public var canvasId: String
+    /// Provider-supplied title, when available.
+    public var title: String?
+    /// Provider-supplied status text, when available.
+    public var status: String?
+    /// Current absolute HTTP(S) source URL; absent when the live source is unavailable.
+    /// Hosts MUST clear this field when the provider becomes unavailable.
+    ///
+    /// Source URLs MUST be redacted from diagnostic logs and MUST NOT be reused
+    /// from persisted state after a provider or host restart.
+    public var url: String?
+
+    public init(
+        instanceId: String,
+        extensionId: String,
+        extensionName: String? = nil,
+        canvasId: String,
+        title: String? = nil,
+        status: String? = nil,
+        url: String? = nil
+    ) {
+        self.instanceId = instanceId
+        self.extensionId = extensionId
+        self.extensionName = extensionName
+        self.canvasId = canvasId
+        self.title = title
+        self.status = status
+        self.url = url
+    }
+}
+
 public struct Changeset: Codable, Sendable {
     /// Human-readable label, e.g. `"Uncommitted Changes"`.
     public var label: String
@@ -5635,8 +6009,8 @@ public struct Changeset: Codable, Sendable {
     ///
     /// | Variables in template                       | Meaning                                                                              |
     /// | ------------------------------------------- | ------------------------------------------------------------------------------------ |
-    /// | _(none)_                                    | A static, session-wide changeset. The template is itself a subscribable URI.         |
-    /// | `{turnId}`                                  | Per-turn slice. Expand with a `Turn.id` from the session.                            |
+    /// | _(none)_                                    | A static changeset scoped to the advertising session or chat. The template is itself a subscribable URI. |
+    /// | `{turnId}`                                  | Per-turn slice. Expand with a `Turn.id` from the advertising chat or session.        |
     /// | `{originalTurnId}` and `{modifiedTurnId}`   | Diff between two turns. Both variables MUST be present.                              |
     ///
     /// Future protocol versions MAY add new well-known variables.
@@ -5664,11 +6038,11 @@ public struct Changeset: Codable, Sendable {
     /// Optional capability declarations for this changeset. Absent (or an empty
     /// object) means the changeset advertises no optional capabilities.
     ///
-    /// Because the catalogue entry is delivered up-front on
-    /// {@link ChangesetState | the session's changeset list}, clients can decide
-    /// whether to surface capability-gated UI (such as review checkboxes) without
-    /// first subscribing to the changeset URI. Mirrors the presence-flag
-    /// convention of `ClientCapabilities`.
+    /// Because the catalogue entry is delivered up-front on the advertising
+    /// session or chat's changeset list, clients can decide whether to surface
+    /// capability-gated UI (such as review checkboxes) without first subscribing
+    /// to the changeset URI. Mirrors the presence-flag convention of
+    /// `ClientCapabilities`.
     public var capabilities: ChangesetCapabilities?
 
     public init(
@@ -6211,19 +6585,45 @@ public struct AutomationSessionTemplate: Codable, Sendable {
     /// {@link CreateSessionParams.config}, normally obtained from
     /// {@link ResolveSessionConfigResult.values}.
     public var config: [String: AnyCodable]?
+    /// Client plugins to make available in every run session, in the same
+    /// published shape as
+    /// {@link SessionActiveClient.customizations | `activeClients[].customizations`}.
+    /// Entries are keyed by `id`.
+    ///
+    /// Runs usually start when no client is connected, so the host does not
+    /// resolve these URIs at run time. Instead, when it accepts a
+    /// {@link AutomationCreateRequestedAction | `automation/createRequested`} or
+    /// {@link AutomationUpdateRequestedAction | `automation/updateRequested`}
+    /// that adds an entry or changes an entry's `uri` or `nonce`, the host
+    /// captures a host-owned copy of the plugin. For client-served URIs such as
+    /// `virtual://…`, it reads the contents from the dispatching client with
+    /// server→client `resource*` requests. If a capture fails, the host rejects
+    /// the whole action. Entries whose `id`, `uri`, and `nonce` are unchanged keep
+    /// their existing copy, so any client can re-submit a template it received
+    /// without being able to serve the plugin itself. The resulting copies are
+    /// reported in {@link AutomationEntry.customizations}.
+    ///
+    /// The host MAY share one stored copy between entries with equal `uri` and
+    /// `nonce`, including across automations; this is not observable to clients.
+    ///
+    /// Clients MUST NOT set this field unless the host advertises
+    /// {@link AutomationCapabilities.customizations}.
+    public var customizations: [ClientPluginCustomization]?
 
     public init(
         provider: String? = nil,
         model: ModelSelection? = nil,
         agent: AgentSelection? = nil,
         workingDirectories: [String]? = nil,
-        config: [String: AnyCodable]? = nil
+        config: [String: AnyCodable]? = nil,
+        customizations: [ClientPluginCustomization]? = nil
     ) {
         self.provider = provider
         self.model = model
         self.agent = agent
         self.workingDirectories = workingDirectories
         self.config = config
+        self.customizations = customizations
     }
 }
 
@@ -6240,6 +6640,20 @@ public struct AutomationDefinition: Codable, Sendable {
     public var enabled: Bool
     /// Automatic triggers. An empty list means manual-only.
     public var triggers: [AutomationTrigger]
+    /// Self-disable rules combined with logical OR: the host sets
+    /// {@link AutomationDefinition.enabled} to `false` when any condition is met.
+    /// Absent or empty means no automatic disable conditions. Each
+    /// {@link AutomationDisableConditionKind} may appear at most once; hosts MUST
+    /// reject create or update requests containing duplicate kinds.
+    ///
+    /// Only automatic (scheduled) runs are governed; manual runs via
+    /// {@link RunAutomationParams | runAutomation} are never blocked. For a
+    /// {@link AutomationAfterRunsCondition}, usage is tracked by the host-owned
+    /// {@link AutomationEntry.runCount}. Adding that kind when absent or
+    /// a disabled→enabled transition starts a fresh allowance. Clearing the
+    /// conditions does not re-enable a disabled automation. See the
+    /// {@link /guide/automations | Automations Guide}.
+    public var disableConditions: [AutomationDisableCondition]?
     /// Opaque implementation-defined metadata. Clients MUST preserve unknown
     /// entries when updating the definition.
     public var meta: [String: AnyCodable]?
@@ -6250,6 +6664,7 @@ public struct AutomationDefinition: Codable, Sendable {
         case session
         case enabled
         case triggers
+        case disableConditions
         case meta = "_meta"
     }
 
@@ -6259,6 +6674,7 @@ public struct AutomationDefinition: Codable, Sendable {
         session: AutomationSessionTemplate,
         enabled: Bool,
         triggers: [AutomationTrigger],
+        disableConditions: [AutomationDisableCondition]? = nil,
         meta: [String: AnyCodable]? = nil
     ) {
         self.title = title
@@ -6266,6 +6682,7 @@ public struct AutomationDefinition: Codable, Sendable {
         self.session = session
         self.enabled = enabled
         self.triggers = triggers
+        self.disableConditions = disableConditions
         self.meta = meta
     }
 }
@@ -6276,13 +6693,20 @@ public struct AutomationDefinitionPatch: Codable, Sendable {
     /// Replacement {@link AutomationDefinition.message}.
     public var message: Message?
     /// Replacement {@link AutomationDefinition.session}. The host revalidates
-    /// affected event triggers when their discovery context changes.
+    /// affected event triggers when their discovery context changes, and
+    /// captures {@link AutomationSessionTemplate.customizations} entries that
+    /// are new or whose `uri` or `nonce` changed.
     public var session: AutomationSessionTemplate?
     /// Replacement {@link AutomationDefinition.enabled}.
     public var enabled: Bool?
     /// Complete replacement {@link AutomationDefinition.triggers}. The host
     /// validates event ids and normalizes event-trigger titles and descriptions.
     public var triggers: [AutomationTrigger]?
+    /// Complete replacement {@link AutomationDefinition.disableConditions}.
+    /// Omit to leave unchanged; supply an empty array to remove all conditions.
+    /// Each kind may appear at most once; hosts MUST reject duplicate kinds.
+    /// Clearing conditions does not change {@link AutomationDefinition.enabled}.
+    public var disableConditions: [AutomationDisableCondition]?
     /// Complete replacement {@link AutomationDefinition._meta}.
     public var meta: [String: AnyCodable]?
 
@@ -6292,6 +6716,7 @@ public struct AutomationDefinitionPatch: Codable, Sendable {
         case session
         case enabled
         case triggers
+        case disableConditions
         case meta = "_meta"
     }
 
@@ -6301,6 +6726,7 @@ public struct AutomationDefinitionPatch: Codable, Sendable {
         session: AutomationSessionTemplate? = nil,
         enabled: Bool? = nil,
         triggers: [AutomationTrigger]? = nil,
+        disableConditions: [AutomationDisableCondition]? = nil,
         meta: [String: AnyCodable]? = nil
     ) {
         self.title = title
@@ -6308,7 +6734,36 @@ public struct AutomationDefinitionPatch: Codable, Sendable {
         self.session = session
         self.enabled = enabled
         self.triggers = triggers
+        self.disableConditions = disableConditions
         self.meta = meta
+    }
+}
+
+public struct AutomationAfterRunsCondition: Codable, Sendable {
+    public var kind: AutomationDisableConditionKind
+    /// Positive-integer cap on scheduled runs.
+    public var max: Int
+
+    public init(
+        kind: AutomationDisableConditionKind,
+        max: Int
+    ) {
+        self.kind = kind
+        self.max = max
+    }
+}
+
+public struct AutomationAfterDateCondition: Codable, Sendable {
+    public var kind: AutomationDisableConditionKind
+    /// ISO 8601 timestamp after which scheduling stops.
+    public var date: String
+
+    public init(
+        kind: AutomationDisableConditionKind,
+        date: String
+    ) {
+        self.kind = kind
+        self.date = date
     }
 }
 
@@ -6319,6 +6774,18 @@ public struct AutomationEntry: Codable, Sendable {
     public var definition: AutomationDefinition
     /// Earliest schedule occurrence awaiting evaluation, as an ISO 8601 timestamp. It may be in the past while catch-up is pending.
     public var nextRunAt: String?
+    /// Host-owned count of scheduled runs consumed against the current
+    /// {@link AutomationAfterRunsCondition} allowance. Authoritative usage for the
+    /// **current** allowance, not a lifetime total: the host resets it to `0` when
+    /// a disabled→enabled transition starts a fresh allowance or a
+    /// {@link AutomationAfterRunsCondition} is added when none was present. It is NOT
+    /// reconstructed from {@link runs} (a bounded, prunable window). The host
+    /// increments it atomically when it admits a scheduled run, including runs
+    /// later cancelled or failed.
+    ///
+    /// Absent when {@link AutomationDefinition.disableConditions} contains no
+    /// {@link AutomationAfterRunsCondition}.
+    public var runCount: Int?
     /// Newest-first retained run summaries. This is a bounded window; use
     /// {@link FetchAutomationRunsParams | fetchAutomationRuns} when
     /// {@link AutomationEntry.runsNextCursor} is present.
@@ -6327,6 +6794,20 @@ public struct AutomationEntry: Codable, Sendable {
     public var runsNextCursor: String?
     /// Operations currently permitted for this automation.
     public var operations: [AutomationOperation]
+    /// Host-owned copies of the plugins in
+    /// {@link AutomationSessionTemplate.customizations}, one per template entry
+    /// with the same `id`. Absent when the template has no customizations.
+    ///
+    /// Each copy's `uri` identifies the captured contents, which clients can
+    /// browse with `resourceRead`. `children` and `load` report what the host
+    /// found in that copy, independent of whether the originating client is
+    /// connected. `clientId` is absent because the copy no longer depends on a
+    /// client.
+    ///
+    /// Every run session receives these plugins in
+    /// {@link SessionState.customizations}, with the enablement from the
+    /// matching template entry.
+    public var customizations: [PluginCustomization]?
     /// Creation timestamp in ISO 8601 format.
     public var createdAt: String
     /// Last definition modification timestamp in ISO 8601 format.
@@ -6338,9 +6819,11 @@ public struct AutomationEntry: Codable, Sendable {
         case resource
         case definition
         case nextRunAt
+        case runCount
         case runs
         case runsNextCursor
         case operations
+        case customizations
         case createdAt
         case modifiedAt
         case meta = "_meta"
@@ -6350,9 +6833,11 @@ public struct AutomationEntry: Codable, Sendable {
         resource: String,
         definition: AutomationDefinition,
         nextRunAt: String? = nil,
+        runCount: Int? = nil,
         runs: [AutomationRunSummary],
         runsNextCursor: String? = nil,
         operations: [AutomationOperation],
+        customizations: [PluginCustomization]? = nil,
         createdAt: String,
         modifiedAt: String,
         meta: [String: AnyCodable]? = nil
@@ -6360,9 +6845,11 @@ public struct AutomationEntry: Codable, Sendable {
         self.resource = resource
         self.definition = definition
         self.nextRunAt = nextRunAt
+        self.runCount = runCount
         self.runs = runs
         self.runsNextCursor = runsNextCursor
         self.operations = operations
+        self.customizations = customizations
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.meta = meta
@@ -7510,6 +7997,41 @@ public enum SessionInputRequest: Codable, Sendable {
         }
     }
 }
+public enum BackgroundWork: Codable, Sendable {
+    case shell(BackgroundShellWork)
+    case subagent(BackgroundSubagentWork)
+    /// Unknown or future discriminant; the raw payload is preserved
+    /// and re-encoded verbatim for forward-compatibility.
+    case unknown(AnyCodable)
+
+    private enum DiscriminantKey: String, CodingKey {
+        case discriminant = "kind"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DiscriminantKey.self)
+        guard let discriminant = try container.decodeIfPresent(String.self, forKey: .discriminant) else {
+            self = .unknown(try AnyCodable(from: decoder))
+            return
+        }
+        switch discriminant {
+        case "shell":
+            self = .shell(try BackgroundShellWork(from: decoder))
+        case "subagent":
+            self = .subagent(try BackgroundSubagentWork(from: decoder))
+        default:
+            self = .unknown(try AnyCodable(from: decoder))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .shell(let value): try value.encode(to: encoder)
+        case .subagent(let value): try value.encode(to: encoder)
+        case .unknown(let value): try value.encode(to: encoder)
+        }
+    }
+}
 
 public enum SessionOrigin: Codable, Sendable {
     case automation(AutomationSessionOrigin)
@@ -7573,6 +8095,39 @@ public enum AutomationTrigger: Codable, Sendable {
             try value.encode(to: encoder)
         case .event(var value):
             value.kind = .event
+            try value.encode(to: encoder)
+        }
+    }
+}
+
+public enum AutomationDisableCondition: Codable, Sendable {
+    case afterRuns(AutomationAfterRunsCondition)
+    case afterDate(AutomationAfterDateCondition)
+
+    private enum DiscriminantKey: String, CodingKey {
+        case discriminant = "kind"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DiscriminantKey.self)
+        let discriminant = try container.decode(String.self, forKey: .discriminant)
+        switch discriminant {
+        case "afterRuns":
+            self = .afterRuns(try AutomationAfterRunsCondition(from: decoder))
+        case "afterDate":
+            self = .afterDate(try AutomationAfterDateCondition(from: decoder))
+        default:
+            throw DecodingError.dataCorruptedError(forKey: .discriminant, in: container, debugDescription: "Unknown AutomationDisableCondition discriminant: \(discriminant)")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .afterRuns(var value):
+            value.kind = .afterRuns
+            try value.encode(to: encoder)
+        case .afterDate(var value):
+            value.kind = .afterDate
             try value.encode(to: encoder)
         }
     }
@@ -7722,6 +8277,7 @@ public enum SnapshotState: Codable, Sendable {
     case root(RootState)
     case session(SessionState)
     case chat(ChatState)
+    case canvas(CanvasState)
     case terminal(TerminalState)
     case changeset(ChangesetState)
     case resourceWatch(ResourceWatchState)
@@ -7732,12 +8288,15 @@ public enum SnapshotState: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         // Try the most distinctive shapes first. SessionState has required
         // `lifecycle` / `activeClients` / `chats`; ChatState has required
-        // `turns`; the remaining variants follow, with RootState as the
+        // `turns`; CanvasState has required instance/provider/type identifiers;
+        // the remaining variants follow, with RootState as the
         // catch-all.
         if let session = try? SessionState(from: decoder) {
             self = .session(session)
         } else if let chat = try? ChatState(from: decoder) {
             self = .chat(chat)
+        } else if let canvas = try? CanvasState(from: decoder) {
+            self = .canvas(canvas)
         } else if let terminal = try? TerminalState(from: decoder) {
             self = .terminal(terminal)
         } else if let changeset = try? ChangesetState(from: decoder) {
@@ -7760,6 +8319,7 @@ public enum SnapshotState: Codable, Sendable {
         case .root(let state): try state.encode(to: encoder)
         case .session(let state): try state.encode(to: encoder)
         case .chat(let state): try state.encode(to: encoder)
+        case .canvas(let state): try state.encode(to: encoder)
         case .terminal(let state): try state.encode(to: encoder)
         case .changeset(let state): try state.encode(to: encoder)
         case .resourceWatch(let state): try state.encode(to: encoder)

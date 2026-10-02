@@ -83,6 +83,7 @@ type SessionSummaryChangedParams struct {
 	//
 	// Identity fields (`resource`, `provider`, `createdAt`) never change and
 	// MUST be omitted by senders; receivers SHOULD ignore them if present.
+	// When `chats` is present, it replaces the complete compact chat catalog.
 	Changes PartialSessionSummary `json:"changes"`
 }
 
@@ -253,4 +254,8 @@ type PartialSessionSummary struct {
 	// SHOULD keep the payload small because summaries appear in session lists
 	// and session notifications.
 	Meta map[string]json.RawMessage `json:"_meta,omitempty"`
+	// Lightweight host-authoritative ordered chat catalog.
+	Chats []SessionChatSummary `json:"chats,omitempty"`
+	// Chat that receives input when none is selected, independent of catalog position.
+	DefaultChat *URI `json:"defaultChat,omitempty"`
 }

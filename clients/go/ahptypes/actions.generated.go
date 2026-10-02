@@ -19,102 +19,112 @@ var _ = json.RawMessage(nil)
 type ActionType string
 
 const (
-	ActionTypeRootAgentsChanged                  ActionType = "root/agentsChanged"
-	ActionTypeRootActiveSessionsChanged          ActionType = "root/activeSessionsChanged"
-	ActionTypeSessionReady                       ActionType = "session/ready"
-	ActionTypeSessionCreationFailed              ActionType = "session/creationFailed"
-	ActionTypeSessionChatAdded                   ActionType = "session/chatAdded"
-	ActionTypeSessionChatRemoved                 ActionType = "session/chatRemoved"
-	ActionTypeSessionChatUpdated                 ActionType = "session/chatUpdated"
-	ActionTypeSessionDefaultChatChanged          ActionType = "session/defaultChatChanged"
-	ActionTypeChatTurnStarted                    ActionType = "chat/turnStarted"
-	ActionTypeChatDelta                          ActionType = "chat/delta"
-	ActionTypeChatResponsePart                   ActionType = "chat/responsePart"
-	ActionTypeChatToolCallStart                  ActionType = "chat/toolCallStart"
-	ActionTypeChatToolCallDelta                  ActionType = "chat/toolCallDelta"
-	ActionTypeChatToolCallReady                  ActionType = "chat/toolCallReady"
-	ActionTypeChatToolCallConfirmed              ActionType = "chat/toolCallConfirmed"
-	ActionTypeChatToolCallComplete               ActionType = "chat/toolCallComplete"
-	ActionTypeChatToolCallResultConfirmed        ActionType = "chat/toolCallResultConfirmed"
-	ActionTypeChatToolCallContentChanged         ActionType = "chat/toolCallContentChanged"
-	ActionTypeChatToolCallAuthRequired           ActionType = "chat/toolCallAuthRequired"
-	ActionTypeChatToolCallAuthResolved           ActionType = "chat/toolCallAuthResolved"
-	ActionTypeChatTurnComplete                   ActionType = "chat/turnComplete"
-	ActionTypeChatTurnCancelled                  ActionType = "chat/turnCancelled"
-	ActionTypeChatError                          ActionType = "chat/error"
-	ActionTypeChatTurnResume                     ActionType = "chat/turnResume"
-	ActionTypeChatActivityChanged                ActionType = "chat/activityChanged"
-	ActionTypeChatWorkingDirectorySet            ActionType = "chat/workingDirectorySet"
-	ActionTypeChatWorkingDirectoryRemoved        ActionType = "chat/workingDirectoryRemoved"
-	ActionTypeSessionTitleChanged                ActionType = "session/titleChanged"
-	ActionTypeChatUsage                          ActionType = "chat/usage"
-	ActionTypeChatReasoning                      ActionType = "chat/reasoning"
-	ActionTypeSessionServerToolsChanged          ActionType = "session/serverToolsChanged"
-	ActionTypeSessionActiveClientSet             ActionType = "session/activeClientSet"
-	ActionTypeSessionActiveClientRemoved         ActionType = "session/activeClientRemoved"
-	ActionTypeSessionWorkingDirectorySet         ActionType = "session/workingDirectorySet"
-	ActionTypeSessionWorkingDirectoryRemoved     ActionType = "session/workingDirectoryRemoved"
-	ActionTypeSessionWorkingDirectoryReplaced    ActionType = "session/workingDirectoryReplaced"
-	ActionTypeSessionInputNeededSet              ActionType = "session/inputNeededSet"
-	ActionTypeSessionInputNeededRemoved          ActionType = "session/inputNeededRemoved"
-	ActionTypeChatPendingMessageSet              ActionType = "chat/pendingMessageSet"
-	ActionTypeChatPendingMessageRemoved          ActionType = "chat/pendingMessageRemoved"
-	ActionTypeChatQueuedMessagesReordered        ActionType = "chat/queuedMessagesReordered"
-	ActionTypeChatDraftChanged                   ActionType = "chat/draftChanged"
-	ActionTypeChatInputRequested                 ActionType = "chat/inputRequested"
-	ActionTypeChatInputAnswerChanged             ActionType = "chat/inputAnswerChanged"
-	ActionTypeChatInputCompleted                 ActionType = "chat/inputCompleted"
-	ActionTypeSessionCustomizationsChanged       ActionType = "session/customizationsChanged"
-	ActionTypeSessionCustomizationToggled        ActionType = "session/customizationToggled"
-	ActionTypeSessionCustomizationUpdated        ActionType = "session/customizationUpdated"
-	ActionTypeSessionCustomizationRemoved        ActionType = "session/customizationRemoved"
-	ActionTypeSessionMcpServerStateChanged       ActionType = "session/mcpServerStateChanged"
-	ActionTypeSessionMcpServerStartRequested     ActionType = "session/mcpServerStartRequested"
-	ActionTypeSessionMcpServerStopRequested      ActionType = "session/mcpServerStopRequested"
-	ActionTypeChatTruncated                      ActionType = "chat/truncated"
-	ActionTypeChatTurnsLoaded                    ActionType = "chat/turnsLoaded"
-	ActionTypeSessionIsReadChanged               ActionType = "session/isReadChanged"
-	ActionTypeSessionIsArchivedChanged           ActionType = "session/isArchivedChanged"
-	ActionTypeSessionActivityChanged             ActionType = "session/activityChanged"
-	ActionTypeSessionChangesetsChanged           ActionType = "session/changesetsChanged"
-	ActionTypeSessionConfigChanged               ActionType = "session/configChanged"
-	ActionTypeSessionMetaChanged                 ActionType = "session/metaChanged"
-	ActionTypeChangesetStatusChanged             ActionType = "changeset/statusChanged"
-	ActionTypeChangesetFileSet                   ActionType = "changeset/fileSet"
-	ActionTypeChangesetFileRemoved               ActionType = "changeset/fileRemoved"
-	ActionTypeChangesetFilesReviewChanged        ActionType = "changeset/filesReviewChanged"
-	ActionTypeChangesetContentChanged            ActionType = "changeset/contentChanged"
-	ActionTypeChangesetOperationsChanged         ActionType = "changeset/operationsChanged"
-	ActionTypeChangesetOperationStatusChanged    ActionType = "changeset/operationStatusChanged"
-	ActionTypeChangesetCleared                   ActionType = "changeset/cleared"
-	ActionTypeAnnotationsSet                     ActionType = "annotations/set"
-	ActionTypeAnnotationsUpdated                 ActionType = "annotations/updated"
-	ActionTypeAnnotationsRemoved                 ActionType = "annotations/removed"
-	ActionTypeAnnotationsEntrySet                ActionType = "annotations/entrySet"
-	ActionTypeAnnotationsEntryRemoved            ActionType = "annotations/entryRemoved"
-	ActionTypeRootTerminalsChanged               ActionType = "root/terminalsChanged"
-	ActionTypeRootConfigChanged                  ActionType = "root/configChanged"
-	ActionTypeTerminalData                       ActionType = "terminal/data"
-	ActionTypeTerminalInput                      ActionType = "terminal/input"
-	ActionTypeTerminalResized                    ActionType = "terminal/resized"
-	ActionTypeTerminalClaimed                    ActionType = "terminal/claimed"
-	ActionTypeTerminalTitleChanged               ActionType = "terminal/titleChanged"
-	ActionTypeTerminalCwdChanged                 ActionType = "terminal/cwdChanged"
-	ActionTypeTerminalExited                     ActionType = "terminal/exited"
-	ActionTypeTerminalCleared                    ActionType = "terminal/cleared"
-	ActionTypeTerminalCommandDetectionAvailable  ActionType = "terminal/commandDetectionAvailable"
-	ActionTypeTerminalCommandExecuted            ActionType = "terminal/commandExecuted"
-	ActionTypeTerminalCommandFinished            ActionType = "terminal/commandFinished"
-	ActionTypeResourceWatchChanged               ActionType = "resourceWatch/changed"
-	ActionTypeAutomationCreateRequested          ActionType = "automation/createRequested"
-	ActionTypeAutomationUpdateRequested          ActionType = "automation/updateRequested"
-	ActionTypeAutomationSet                      ActionType = "automation/set"
-	ActionTypeAutomationRemoved                  ActionType = "automation/removed"
-	ActionTypeAutomationRunLifecycleChanged      ActionType = "automationRun/lifecycleChanged"
-	ActionTypeAutomationRunSessionSet            ActionType = "automationRun/sessionSet"
-	ActionTypeAutomationRunSessionRemoved        ActionType = "automationRun/sessionRemoved"
-	ActionTypeAutomationRunPrimarySessionChanged ActionType = "automationRun/primarySessionChanged"
-	ActionTypeAutomationRunCancelRequested       ActionType = "automationRun/cancelRequested"
+	ActionTypeRootAgentsChanged                   ActionType = "root/agentsChanged"
+	ActionTypeRootActiveSessionsChanged           ActionType = "root/activeSessionsChanged"
+	ActionTypeSessionReady                        ActionType = "session/ready"
+	ActionTypeSessionCreationFailed               ActionType = "session/creationFailed"
+	ActionTypeSessionChatAdded                    ActionType = "session/chatAdded"
+	ActionTypeSessionChatRemoved                  ActionType = "session/chatRemoved"
+	ActionTypeSessionChatUpdated                  ActionType = "session/chatUpdated"
+	ActionTypeSessionChatsReordered               ActionType = "session/chatsReordered"
+	ActionTypeSessionDefaultChatChanged           ActionType = "session/defaultChatChanged"
+	ActionTypeChatTurnStarted                     ActionType = "chat/turnStarted"
+	ActionTypeChatDelta                           ActionType = "chat/delta"
+	ActionTypeChatResponsePart                    ActionType = "chat/responsePart"
+	ActionTypeChatToolCallStart                   ActionType = "chat/toolCallStart"
+	ActionTypeChatToolCallDelta                   ActionType = "chat/toolCallDelta"
+	ActionTypeChatToolCallReady                   ActionType = "chat/toolCallReady"
+	ActionTypeChatToolCallConfirmed               ActionType = "chat/toolCallConfirmed"
+	ActionTypeChatToolCallComplete                ActionType = "chat/toolCallComplete"
+	ActionTypeChatToolCallResultConfirmed         ActionType = "chat/toolCallResultConfirmed"
+	ActionTypeChatToolCallContentChanged          ActionType = "chat/toolCallContentChanged"
+	ActionTypeChatToolCallAuthRequired            ActionType = "chat/toolCallAuthRequired"
+	ActionTypeChatToolCallAuthResolved            ActionType = "chat/toolCallAuthResolved"
+	ActionTypeChatTurnComplete                    ActionType = "chat/turnComplete"
+	ActionTypeChatTurnCancelled                   ActionType = "chat/turnCancelled"
+	ActionTypeChatError                           ActionType = "chat/error"
+	ActionTypeChatTurnResume                      ActionType = "chat/turnResume"
+	ActionTypeChatActivityChanged                 ActionType = "chat/activityChanged"
+	ActionTypeChatBackgroundWorkSet               ActionType = "chat/backgroundWorkSet"
+	ActionTypeChatBackgroundWorkRemoved           ActionType = "chat/backgroundWorkRemoved"
+	ActionTypeChatMovableChanged                  ActionType = "chat/movableChanged"
+	ActionTypeChatChangesetsChanged               ActionType = "chat/changesetsChanged"
+	ActionTypeChatCanvasesChanged                 ActionType = "chat/canvasesChanged"
+	ActionTypeCanvasStateChanged                  ActionType = "canvas/stateChanged"
+	ActionTypeChatWorkingDirectorySet             ActionType = "chat/workingDirectorySet"
+	ActionTypeChatWorkingDirectoryRemoved         ActionType = "chat/workingDirectoryRemoved"
+	ActionTypeSessionTitleChanged                 ActionType = "session/titleChanged"
+	ActionTypeChatUsage                           ActionType = "chat/usage"
+	ActionTypeChatReasoning                       ActionType = "chat/reasoning"
+	ActionTypeSessionServerToolsChanged           ActionType = "session/serverToolsChanged"
+	ActionTypeSessionActiveClientSet              ActionType = "session/activeClientSet"
+	ActionTypeSessionActiveClientRemoved          ActionType = "session/activeClientRemoved"
+	ActionTypeSessionWorkingDirectorySet          ActionType = "session/workingDirectorySet"
+	ActionTypeSessionWorkingDirectoryRemoved      ActionType = "session/workingDirectoryRemoved"
+	ActionTypeSessionWorkingDirectoryReplaced     ActionType = "session/workingDirectoryReplaced"
+	ActionTypeSessionInputNeededSet               ActionType = "session/inputNeededSet"
+	ActionTypeSessionInputNeededRemoved           ActionType = "session/inputNeededRemoved"
+	ActionTypeChatPendingMessageSet               ActionType = "chat/pendingMessageSet"
+	ActionTypeChatPendingMessageRemoved           ActionType = "chat/pendingMessageRemoved"
+	ActionTypeChatQueuedMessagesReordered         ActionType = "chat/queuedMessagesReordered"
+	ActionTypeChatDraftChanged                    ActionType = "chat/draftChanged"
+	ActionTypeChatIsReadChanged                   ActionType = "chat/isReadChanged"
+	ActionTypeChatIsArchivedChanged               ActionType = "chat/isArchivedChanged"
+	ActionTypeChatInputRequested                  ActionType = "chat/inputRequested"
+	ActionTypeChatInputAnswerChanged              ActionType = "chat/inputAnswerChanged"
+	ActionTypeChatInputCompleted                  ActionType = "chat/inputCompleted"
+	ActionTypeSessionCustomizationsChanged        ActionType = "session/customizationsChanged"
+	ActionTypeSessionCustomizationToggled         ActionType = "session/customizationToggled"
+	ActionTypeSessionCustomizationUpdated         ActionType = "session/customizationUpdated"
+	ActionTypeSessionCustomizationRemoved         ActionType = "session/customizationRemoved"
+	ActionTypeSessionMcpServerStateChanged        ActionType = "session/mcpServerStateChanged"
+	ActionTypeSessionMcpServerStartRequested      ActionType = "session/mcpServerStartRequested"
+	ActionTypeSessionMcpServerStopRequested       ActionType = "session/mcpServerStopRequested"
+	ActionTypeSessionMcpServerBackgroundRequested ActionType = "session/mcpServerBackgroundRequested"
+	ActionTypeChatTruncated                       ActionType = "chat/truncated"
+	ActionTypeChatTurnsLoaded                     ActionType = "chat/turnsLoaded"
+	ActionTypeSessionIsReadChanged                ActionType = "session/isReadChanged"
+	ActionTypeSessionIsArchivedChanged            ActionType = "session/isArchivedChanged"
+	ActionTypeSessionActivityChanged              ActionType = "session/activityChanged"
+	ActionTypeSessionChangesetsChanged            ActionType = "session/changesetsChanged"
+	ActionTypeSessionConfigChanged                ActionType = "session/configChanged"
+	ActionTypeSessionMetaChanged                  ActionType = "session/metaChanged"
+	ActionTypeChangesetStatusChanged              ActionType = "changeset/statusChanged"
+	ActionTypeChangesetFileSet                    ActionType = "changeset/fileSet"
+	ActionTypeChangesetFileRemoved                ActionType = "changeset/fileRemoved"
+	ActionTypeChangesetFilesReviewChanged         ActionType = "changeset/filesReviewChanged"
+	ActionTypeChangesetContentChanged             ActionType = "changeset/contentChanged"
+	ActionTypeChangesetOperationsChanged          ActionType = "changeset/operationsChanged"
+	ActionTypeChangesetOperationStatusChanged     ActionType = "changeset/operationStatusChanged"
+	ActionTypeChangesetCleared                    ActionType = "changeset/cleared"
+	ActionTypeAnnotationsSet                      ActionType = "annotations/set"
+	ActionTypeAnnotationsUpdated                  ActionType = "annotations/updated"
+	ActionTypeAnnotationsRemoved                  ActionType = "annotations/removed"
+	ActionTypeAnnotationsEntrySet                 ActionType = "annotations/entrySet"
+	ActionTypeAnnotationsEntryRemoved             ActionType = "annotations/entryRemoved"
+	ActionTypeRootTerminalsChanged                ActionType = "root/terminalsChanged"
+	ActionTypeRootConfigChanged                   ActionType = "root/configChanged"
+	ActionTypeTerminalData                        ActionType = "terminal/data"
+	ActionTypeTerminalInput                       ActionType = "terminal/input"
+	ActionTypeTerminalResized                     ActionType = "terminal/resized"
+	ActionTypeTerminalClaimed                     ActionType = "terminal/claimed"
+	ActionTypeTerminalTitleChanged                ActionType = "terminal/titleChanged"
+	ActionTypeTerminalCwdChanged                  ActionType = "terminal/cwdChanged"
+	ActionTypeTerminalExited                      ActionType = "terminal/exited"
+	ActionTypeTerminalCleared                     ActionType = "terminal/cleared"
+	ActionTypeTerminalCommandDetectionAvailable   ActionType = "terminal/commandDetectionAvailable"
+	ActionTypeTerminalCommandExecuted             ActionType = "terminal/commandExecuted"
+	ActionTypeTerminalCommandFinished             ActionType = "terminal/commandFinished"
+	ActionTypeResourceWatchChanged                ActionType = "resourceWatch/changed"
+	ActionTypeAutomationCreateRequested           ActionType = "automation/createRequested"
+	ActionTypeAutomationUpdateRequested           ActionType = "automation/updateRequested"
+	ActionTypeAutomationSet                       ActionType = "automation/set"
+	ActionTypeAutomationRemoved                   ActionType = "automation/removed"
+	ActionTypeAutomationRunLifecycleChanged       ActionType = "automationRun/lifecycleChanged"
+	ActionTypeAutomationRunSessionSet             ActionType = "automationRun/sessionSet"
+	ActionTypeAutomationRunSessionRemoved         ActionType = "automationRun/sessionRemoved"
+	ActionTypeAutomationRunPrimarySessionChanged  ActionType = "automationRun/primarySessionChanged"
+	ActionTypeAutomationRunCancelRequested        ActionType = "automationRun/cancelRequested"
 )
 
 // ─── Action Envelope ─────────────────────────────────────────────────
@@ -204,6 +214,9 @@ type SessionChatRemovedAction struct {
 // SHOULD then wait for a {@link SessionChatAddedAction | `session/chatAdded`}.
 //
 // Mirrors the root-channel `root/sessionSummaryChanged` notification.
+// When `changes.status` changes, the host MUST project that exact value into
+// the matching `SessionChatSummary.status` field and publish
+// the updated compact chat catalog through `root/sessionSummaryChanged`.
 type SessionChatUpdatedAction struct {
 	Type ActionType `json:"type"`
 	// The URI of the chat whose summary changed.
@@ -213,6 +226,19 @@ type SessionChatUpdatedAction struct {
 	// Identity fields (`resource`) never change and MUST be omitted by
 	// senders; receivers SHOULD ignore them if present.
 	Changes PartialChatSummary `json:"changes"`
+}
+
+// The owning session's authoritative chat catalog order changed.
+//
+// Host-emitted convergence signal; it never originates from a client
+// dispatch. `chats` is the complete resulting order and MUST contain every
+// chat currently in the session exactly once. Reducers replace the catalog
+// order while preserving each matching summary. Invalid or incomplete orders
+// are ignored.
+type SessionChatsReorderedAction struct {
+	Type ActionType `json:"type"`
+	// Every chat URI in authoritative catalog order.
+	Chats []URI `json:"chats"`
 }
 
 // The default chat input-routing hint for this session changed.
@@ -379,7 +405,7 @@ type ChatToolCallReadyAction struct {
 	// Risk assessment that informed the confirmation requirement.
 	RiskAssessment *ToolCallRiskAssessment `json:"riskAssessment,omitempty"`
 	// File edits that this tool call will perform, for preview before confirmation
-	Edits *json.RawMessage `json:"edits,omitempty"`
+	Edits *FileEditCollection `json:"edits,omitempty"`
 	// Whether the agent host allows the client to edit the tool's input parameters before confirming
 	Editable *bool `json:"editable,omitempty"`
 	// If set, the tool was auto-confirmed and transitions directly to `running`
@@ -641,6 +667,70 @@ type ChatActivityChangedAction struct {
 	Activity *string `json:"activity,omitempty"`
 }
 
+// Adds or replaces a {@link BackgroundWork} entry by `id`, independently of turn
+// state.
+type ChatBackgroundWorkSetAction struct {
+	Type ActionType `json:"type"`
+	// The complete entry.
+	Work BackgroundWork `json:"work"`
+}
+
+// Removes finished or no-longer-tracked background work; unknown IDs are a no-op.
+type ChatBackgroundWorkRemovedAction struct {
+	Type ActionType `json:"type"`
+	// The {@link BackgroundWorkBase.id | id} of the entry to remove.
+	Id string `json:"id"`
+}
+
+// Whether this chat is structurally eligible to be the source of `moveChat`
+// changed.
+//
+// The host is authoritative and MUST also update the owning session's chat
+// catalog with `session/chatUpdated` so `ChatSummary.movable` stays in sync.
+// A chat referenced by its owning session's `defaultChat` MUST always carry
+// `movable: false`.
+type ChatMovableChangedAction struct {
+	Type ActionType `json:"type"`
+	// Whether this chat is structurally eligible to be moved.
+	Movable bool `json:"movable"`
+}
+
+// The {@link Changeset | catalogue of changesets} the agent host advertises
+// for this chat changed. Replaces
+// {@link ChatState.changesets | `state.changesets`} entirely
+// (full-replacement semantics) — set to `undefined` to clear the catalogue.
+//
+// Entries SHOULD describe Branch, Uncommitted Changes, or other views scoped
+// to the chat's effective {@link ChatState.workingDirectories | working
+// directories}. Clients subscribe to each advertised changeset URI for
+// file-level updates through the existing `changeset/*` action stream.
+type ChatChangesetsChangedAction struct {
+	Type ActionType `json:"type"`
+	// New catalogue, or `undefined` to clear it.
+	Changesets []Changeset `json:"changesets,omitempty"`
+}
+
+// The live canvas channels exposed by this chat changed.
+//
+// Replaces {@link ChatState.canvases | `state.canvases`} entirely. Set to
+// `undefined` to clear the collection.
+type ChatCanvasesChangedAction struct {
+	Type ActionType `json:"type"`
+	// New canvas channel references, or `undefined` to clear the collection.
+	Canvases []CanvasReference `json:"canvases,omitempty"`
+}
+
+// The presentation state for this canvas changed.
+//
+// Replaces the subscribed canvas channel state entirely. Full-replacement
+// semantics intentionally keep this early-development channel free to evolve
+// without expanding the stable chat action surface.
+type CanvasStateChangedAction struct {
+	Type ActionType `json:"type"`
+	// New authoritative canvas state.
+	Canvas CanvasState `json:"canvas"`
+}
+
 // Session title updated. Fired by the server when the title is auto-generated
 // from conversation, or dispatched by a client to rename a session.
 type SessionTitleChangedAction struct {
@@ -748,6 +838,32 @@ type ChatDraftChangedAction struct {
 	Type ActionType `json:"type"`
 	// New draft message, or `undefined` to clear it
 	Draft *Message `json:"draft,omitempty"`
+}
+
+// The read state of the chat changed.
+//
+// Dispatched by a client to mark any known chat, including the owning
+// session's default chat, as read (e.g. after viewing it) or unread. This
+// changes only the addressed chat; it does not change the read state of its
+// owning session or sibling chats. Use `session/isReadChanged` only to change
+// the owning session's independent read state. After accepting this action,
+// the host also synchronizes the addressed chat's `ChatSummary.status` and
+// `SessionChatSummary.status` projections.
+type ChatIsReadChangedAction struct {
+	Type ActionType `json:"type"`
+	// Whether the chat has been read
+	IsRead bool `json:"isRead"`
+}
+
+// The archived state of the chat changed.
+//
+// Dispatched by a client to archive a chat independently of its owning
+// session or to restore it. Archiving the session's default chat is equivalent
+// to archiving the session and SHOULD use `session/isArchivedChanged` instead.
+type ChatIsArchivedChangedAction struct {
+	Type ActionType `json:"type"`
+	// Whether the chat is archived
+	IsArchived bool `json:"isArchived"`
 }
 
 // A session requested input from the user.
@@ -1156,6 +1272,30 @@ type SessionMcpServerStopRequestedAction struct {
 	Id string `json:"id"`
 }
 
+// Requests that the host background the startup of an existing
+// {@link McpServerCustomization} that is currently blocking message
+// processing (see {@link McpServerStartingState.blocking}), so that new
+// messages can be processed without waiting for the server to finish
+// starting.
+//
+// The server keeps starting in the background; backgrounding only stops the
+// host from holding message processing on it.
+//
+// Locates the target entry by `id`, searching both the top-level
+// customization list and the `children` array of every container. When the
+// server is {@link McpServerStatus.Starting | `starting`} with
+// `blocking: true`, the reducer optimistically sets `blocking` to `false`,
+// preserving the rest of the entry. Is a no-op otherwise (no matching
+// `McpServerCustomization`, a different lifecycle state, or not blocking).
+// The host remains authoritative and MAY reject the request by following with
+// {@link SessionMcpServerStateChangedAction | `session/mcpServerStateChanged`}
+// restoring `blocking: true`.
+type SessionMcpServerBackgroundRequestedAction struct {
+	Type ActionType `json:"type"`
+	// The id of the {@link McpServerCustomization} to background.
+	Id string `json:"id"`
+}
+
 // Client changed a mutable config value mid-session.
 //
 // Only properties with `sessionMutable: true` in the config schema may be
@@ -1179,8 +1319,9 @@ type SessionMetaChangedAction struct {
 }
 
 // The {@link ChangesetState.status} for this changeset transitioned (e.g.
-// `computing → ready`). The error payload is set together with `status`
-// whenever it transitions to {@link ChangesetStatus.Error | Error}.
+// `computing → ready` or `recomputing → ready`). The error payload is set
+// together with `status` whenever it transitions to
+// {@link ChangesetStatus.Error | Error}.
 type ChangesetStatusChangedAction struct {
 	Type ActionType `json:"type"`
 	// New computation lifecycle status.
@@ -1544,7 +1685,9 @@ type ResourceWatchChangedAction struct {
 //
 // This side-effect request leaves optimistic catalogue state unchanged. The
 // host validates trigger ids and configuration, normalizes event-trigger
-// titles and descriptions, persists the definition, then publishes the
+// titles and descriptions, captures any
+// {@link AutomationSessionTemplate.customizations | session customizations}
+// from the dispatching client, persists the definition, then publishes the
 // authoritative result with {@link AutomationSetAction | `automation/set`}.
 // Rejections leave the catalogue unchanged.
 type AutomationCreateRequestedAction struct {
@@ -1662,102 +1805,112 @@ type StateAction struct {
 // concrete variant of StateAction.
 type isStateAction interface{ isStateAction() }
 
-func (*RootAgentsChangedAction) isStateAction()                  {}
-func (*RootActiveSessionsChangedAction) isStateAction()          {}
-func (*RootConfigChangedAction) isStateAction()                  {}
-func (*SessionReadyAction) isStateAction()                       {}
-func (*SessionCreationFailedAction) isStateAction()              {}
-func (*SessionChatAddedAction) isStateAction()                   {}
-func (*SessionChatRemovedAction) isStateAction()                 {}
-func (*SessionChatUpdatedAction) isStateAction()                 {}
-func (*SessionDefaultChatChangedAction) isStateAction()          {}
-func (*ChatTurnStartedAction) isStateAction()                    {}
-func (*ChatDeltaAction) isStateAction()                          {}
-func (*ChatResponsePartAction) isStateAction()                   {}
-func (*ChatToolCallStartAction) isStateAction()                  {}
-func (*ChatToolCallDeltaAction) isStateAction()                  {}
-func (*ChatToolCallReadyAction) isStateAction()                  {}
-func (*ChatToolCallConfirmedAction) isStateAction()              {}
-func (*ChatToolCallCompleteAction) isStateAction()               {}
-func (*ChatToolCallResultConfirmedAction) isStateAction()        {}
-func (*ChatToolCallContentChangedAction) isStateAction()         {}
-func (*ChatToolCallAuthRequiredAction) isStateAction()           {}
-func (*ChatToolCallAuthResolvedAction) isStateAction()           {}
-func (*ChatTurnCompleteAction) isStateAction()                   {}
-func (*ChatTurnCancelledAction) isStateAction()                  {}
-func (*ChatErrorAction) isStateAction()                          {}
-func (*ChatTurnResumeAction) isStateAction()                     {}
-func (*ChatActivityChangedAction) isStateAction()                {}
-func (*SessionTitleChangedAction) isStateAction()                {}
-func (*ChatUsageAction) isStateAction()                          {}
-func (*ChatReasoningAction) isStateAction()                      {}
-func (*ChatPendingMessageSetAction) isStateAction()              {}
-func (*ChatPendingMessageRemovedAction) isStateAction()          {}
-func (*ChatQueuedMessagesReorderedAction) isStateAction()        {}
-func (*ChatDraftChangedAction) isStateAction()                   {}
-func (*ChatInputRequestedAction) isStateAction()                 {}
-func (*ChatInputAnswerChangedAction) isStateAction()             {}
-func (*ChatInputCompletedAction) isStateAction()                 {}
-func (*ChatTruncatedAction) isStateAction()                      {}
-func (*ChatTurnsLoadedAction) isStateAction()                    {}
-func (*SessionIsReadChangedAction) isStateAction()               {}
-func (*SessionIsArchivedChangedAction) isStateAction()           {}
-func (*SessionActivityChangedAction) isStateAction()             {}
-func (*SessionChangesetsChangedAction) isStateAction()           {}
-func (*SessionServerToolsChangedAction) isStateAction()          {}
-func (*SessionActiveClientSetAction) isStateAction()             {}
-func (*SessionActiveClientRemovedAction) isStateAction()         {}
-func (*SessionWorkingDirectorySetAction) isStateAction()         {}
-func (*SessionWorkingDirectoryRemovedAction) isStateAction()     {}
-func (*SessionWorkingDirectoryReplacedAction) isStateAction()    {}
-func (*ChatWorkingDirectorySetAction) isStateAction()            {}
-func (*ChatWorkingDirectoryRemovedAction) isStateAction()        {}
-func (*SessionInputNeededSetAction) isStateAction()              {}
-func (*SessionInputNeededRemovedAction) isStateAction()          {}
-func (*SessionCustomizationsChangedAction) isStateAction()       {}
-func (*SessionCustomizationToggledAction) isStateAction()        {}
-func (*SessionCustomizationUpdatedAction) isStateAction()        {}
-func (*SessionCustomizationRemovedAction) isStateAction()        {}
-func (*SessionMcpServerStateChangedAction) isStateAction()       {}
-func (*SessionMcpServerStartRequestedAction) isStateAction()     {}
-func (*SessionMcpServerStopRequestedAction) isStateAction()      {}
-func (*SessionConfigChangedAction) isStateAction()               {}
-func (*SessionMetaChangedAction) isStateAction()                 {}
-func (*ChangesetStatusChangedAction) isStateAction()             {}
-func (*ChangesetFileSetAction) isStateAction()                   {}
-func (*ChangesetFileRemovedAction) isStateAction()               {}
-func (*ChangesetFilesReviewChangedAction) isStateAction()        {}
-func (*ChangesetContentChangedAction) isStateAction()            {}
-func (*ChangesetOperationsChangedAction) isStateAction()         {}
-func (*ChangesetOperationStatusChangedAction) isStateAction()    {}
-func (*ChangesetClearedAction) isStateAction()                   {}
-func (*AnnotationsSetAction) isStateAction()                     {}
-func (*AnnotationsUpdatedAction) isStateAction()                 {}
-func (*AnnotationsRemovedAction) isStateAction()                 {}
-func (*AnnotationsEntrySetAction) isStateAction()                {}
-func (*AnnotationsEntryRemovedAction) isStateAction()            {}
-func (*RootTerminalsChangedAction) isStateAction()               {}
-func (*TerminalDataAction) isStateAction()                       {}
-func (*TerminalInputAction) isStateAction()                      {}
-func (*TerminalResizedAction) isStateAction()                    {}
-func (*TerminalClaimedAction) isStateAction()                    {}
-func (*TerminalTitleChangedAction) isStateAction()               {}
-func (*TerminalCwdChangedAction) isStateAction()                 {}
-func (*TerminalExitedAction) isStateAction()                     {}
-func (*TerminalClearedAction) isStateAction()                    {}
-func (*TerminalCommandDetectionAvailableAction) isStateAction()  {}
-func (*TerminalCommandExecutedAction) isStateAction()            {}
-func (*TerminalCommandFinishedAction) isStateAction()            {}
-func (*ResourceWatchChangedAction) isStateAction()               {}
-func (*AutomationCreateRequestedAction) isStateAction()          {}
-func (*AutomationUpdateRequestedAction) isStateAction()          {}
-func (*AutomationSetAction) isStateAction()                      {}
-func (*AutomationRemovedAction) isStateAction()                  {}
-func (*AutomationRunLifecycleChangedAction) isStateAction()      {}
-func (*AutomationRunSessionSetAction) isStateAction()            {}
-func (*AutomationRunSessionRemovedAction) isStateAction()        {}
-func (*AutomationRunPrimarySessionChangedAction) isStateAction() {}
-func (*AutomationRunCancelRequestedAction) isStateAction()       {}
+func (*RootAgentsChangedAction) isStateAction()                   {}
+func (*RootActiveSessionsChangedAction) isStateAction()           {}
+func (*RootConfigChangedAction) isStateAction()                   {}
+func (*SessionReadyAction) isStateAction()                        {}
+func (*SessionCreationFailedAction) isStateAction()               {}
+func (*SessionChatAddedAction) isStateAction()                    {}
+func (*SessionChatRemovedAction) isStateAction()                  {}
+func (*SessionChatUpdatedAction) isStateAction()                  {}
+func (*SessionChatsReorderedAction) isStateAction()               {}
+func (*SessionDefaultChatChangedAction) isStateAction()           {}
+func (*ChatTurnStartedAction) isStateAction()                     {}
+func (*ChatDeltaAction) isStateAction()                           {}
+func (*ChatResponsePartAction) isStateAction()                    {}
+func (*ChatToolCallStartAction) isStateAction()                   {}
+func (*ChatToolCallDeltaAction) isStateAction()                   {}
+func (*ChatToolCallReadyAction) isStateAction()                   {}
+func (*ChatToolCallConfirmedAction) isStateAction()               {}
+func (*ChatToolCallCompleteAction) isStateAction()                {}
+func (*ChatToolCallResultConfirmedAction) isStateAction()         {}
+func (*ChatToolCallContentChangedAction) isStateAction()          {}
+func (*ChatToolCallAuthRequiredAction) isStateAction()            {}
+func (*ChatToolCallAuthResolvedAction) isStateAction()            {}
+func (*ChatTurnCompleteAction) isStateAction()                    {}
+func (*ChatTurnCancelledAction) isStateAction()                   {}
+func (*ChatErrorAction) isStateAction()                           {}
+func (*ChatTurnResumeAction) isStateAction()                      {}
+func (*ChatActivityChangedAction) isStateAction()                 {}
+func (*ChatBackgroundWorkSetAction) isStateAction()               {}
+func (*ChatBackgroundWorkRemovedAction) isStateAction()           {}
+func (*ChatMovableChangedAction) isStateAction()                  {}
+func (*ChatChangesetsChangedAction) isStateAction()               {}
+func (*ChatCanvasesChangedAction) isStateAction()                 {}
+func (*CanvasStateChangedAction) isStateAction()                  {}
+func (*SessionTitleChangedAction) isStateAction()                 {}
+func (*ChatUsageAction) isStateAction()                           {}
+func (*ChatReasoningAction) isStateAction()                       {}
+func (*ChatPendingMessageSetAction) isStateAction()               {}
+func (*ChatPendingMessageRemovedAction) isStateAction()           {}
+func (*ChatQueuedMessagesReorderedAction) isStateAction()         {}
+func (*ChatDraftChangedAction) isStateAction()                    {}
+func (*ChatIsReadChangedAction) isStateAction()                   {}
+func (*ChatIsArchivedChangedAction) isStateAction()               {}
+func (*ChatInputRequestedAction) isStateAction()                  {}
+func (*ChatInputAnswerChangedAction) isStateAction()              {}
+func (*ChatInputCompletedAction) isStateAction()                  {}
+func (*ChatTruncatedAction) isStateAction()                       {}
+func (*ChatTurnsLoadedAction) isStateAction()                     {}
+func (*SessionIsReadChangedAction) isStateAction()                {}
+func (*SessionIsArchivedChangedAction) isStateAction()            {}
+func (*SessionActivityChangedAction) isStateAction()              {}
+func (*SessionChangesetsChangedAction) isStateAction()            {}
+func (*SessionServerToolsChangedAction) isStateAction()           {}
+func (*SessionActiveClientSetAction) isStateAction()              {}
+func (*SessionActiveClientRemovedAction) isStateAction()          {}
+func (*SessionWorkingDirectorySetAction) isStateAction()          {}
+func (*SessionWorkingDirectoryRemovedAction) isStateAction()      {}
+func (*SessionWorkingDirectoryReplacedAction) isStateAction()     {}
+func (*ChatWorkingDirectorySetAction) isStateAction()             {}
+func (*ChatWorkingDirectoryRemovedAction) isStateAction()         {}
+func (*SessionInputNeededSetAction) isStateAction()               {}
+func (*SessionInputNeededRemovedAction) isStateAction()           {}
+func (*SessionCustomizationsChangedAction) isStateAction()        {}
+func (*SessionCustomizationToggledAction) isStateAction()         {}
+func (*SessionCustomizationUpdatedAction) isStateAction()         {}
+func (*SessionCustomizationRemovedAction) isStateAction()         {}
+func (*SessionMcpServerStateChangedAction) isStateAction()        {}
+func (*SessionMcpServerStartRequestedAction) isStateAction()      {}
+func (*SessionMcpServerStopRequestedAction) isStateAction()       {}
+func (*SessionMcpServerBackgroundRequestedAction) isStateAction() {}
+func (*SessionConfigChangedAction) isStateAction()                {}
+func (*SessionMetaChangedAction) isStateAction()                  {}
+func (*ChangesetStatusChangedAction) isStateAction()              {}
+func (*ChangesetFileSetAction) isStateAction()                    {}
+func (*ChangesetFileRemovedAction) isStateAction()                {}
+func (*ChangesetFilesReviewChangedAction) isStateAction()         {}
+func (*ChangesetContentChangedAction) isStateAction()             {}
+func (*ChangesetOperationsChangedAction) isStateAction()          {}
+func (*ChangesetOperationStatusChangedAction) isStateAction()     {}
+func (*ChangesetClearedAction) isStateAction()                    {}
+func (*AnnotationsSetAction) isStateAction()                      {}
+func (*AnnotationsUpdatedAction) isStateAction()                  {}
+func (*AnnotationsRemovedAction) isStateAction()                  {}
+func (*AnnotationsEntrySetAction) isStateAction()                 {}
+func (*AnnotationsEntryRemovedAction) isStateAction()             {}
+func (*RootTerminalsChangedAction) isStateAction()                {}
+func (*TerminalDataAction) isStateAction()                        {}
+func (*TerminalInputAction) isStateAction()                       {}
+func (*TerminalResizedAction) isStateAction()                     {}
+func (*TerminalClaimedAction) isStateAction()                     {}
+func (*TerminalTitleChangedAction) isStateAction()                {}
+func (*TerminalCwdChangedAction) isStateAction()                  {}
+func (*TerminalExitedAction) isStateAction()                      {}
+func (*TerminalClearedAction) isStateAction()                     {}
+func (*TerminalCommandDetectionAvailableAction) isStateAction()   {}
+func (*TerminalCommandExecutedAction) isStateAction()             {}
+func (*TerminalCommandFinishedAction) isStateAction()             {}
+func (*ResourceWatchChangedAction) isStateAction()                {}
+func (*AutomationCreateRequestedAction) isStateAction()           {}
+func (*AutomationUpdateRequestedAction) isStateAction()           {}
+func (*AutomationSetAction) isStateAction()                       {}
+func (*AutomationRemovedAction) isStateAction()                   {}
+func (*AutomationRunLifecycleChangedAction) isStateAction()       {}
+func (*AutomationRunSessionSetAction) isStateAction()             {}
+func (*AutomationRunSessionRemovedAction) isStateAction()         {}
+func (*AutomationRunPrimarySessionChangedAction) isStateAction()  {}
+func (*AutomationRunCancelRequestedAction) isStateAction()        {}
 
 // StateActionUnknown carries an unrecognized StateAction variant — typically a discriminator value introduced by a newer protocol version. The original JSON object is preserved verbatim so that re-encoding round-trips faithfully.
 type StateActionUnknown struct {
@@ -1817,6 +1970,12 @@ func (u *StateAction) UnmarshalJSON(data []byte) error {
 		u.Value = &value
 	case "session/chatUpdated":
 		var value SessionChatUpdatedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "session/chatsReordered":
+		var value SessionChatsReorderedAction
 		if err := json.Unmarshal(data, &value); err != nil {
 			return err
 		}
@@ -1929,6 +2088,42 @@ func (u *StateAction) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		u.Value = &value
+	case "chat/backgroundWorkSet":
+		var value ChatBackgroundWorkSetAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "chat/backgroundWorkRemoved":
+		var value ChatBackgroundWorkRemovedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "chat/movableChanged":
+		var value ChatMovableChangedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "chat/changesetsChanged":
+		var value ChatChangesetsChangedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "chat/canvasesChanged":
+		var value ChatCanvasesChangedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "canvas/stateChanged":
+		var value CanvasStateChangedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
 	case "session/titleChanged":
 		var value SessionTitleChangedAction
 		if err := json.Unmarshal(data, &value); err != nil {
@@ -1967,6 +2162,18 @@ func (u *StateAction) UnmarshalJSON(data []byte) error {
 		u.Value = &value
 	case "chat/draftChanged":
 		var value ChatDraftChangedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "chat/isReadChanged":
+		var value ChatIsReadChangedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "chat/isArchivedChanged":
+		var value ChatIsArchivedChangedAction
 		if err := json.Unmarshal(data, &value); err != nil {
 			return err
 		}
@@ -2123,6 +2330,12 @@ func (u *StateAction) UnmarshalJSON(data []byte) error {
 		u.Value = &value
 	case "session/mcpServerStopRequested":
 		var value SessionMcpServerStopRequestedAction
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		u.Value = &value
+	case "session/mcpServerBackgroundRequested":
+		var value SessionMcpServerBackgroundRequestedAction
 		if err := json.Unmarshal(data, &value); err != nil {
 			return err
 		}
